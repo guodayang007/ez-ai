@@ -1,0 +1,18 @@
+# File path: /etc/systemd/system/ez-ai.service
+# sudo systemctl daemon-reload
+# sudo systemctl start ez-ai
+# sudo systemctl enable ez-ai
+# sudo systemctl status ez-ai
+[Unit]
+Description=ez-ai Service
+After=network.target
+
+[Service]
+User=ubuntu  # 注意修改用户名
+WorkingDirectory=/path/to/ez-ai  # 注意修改路径
+ExecStart=/path/to/ez-ai/ez-ai --port 3000 --log-dir /path/to/ez-ai/logs  # 注意修改路径和端口号
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
