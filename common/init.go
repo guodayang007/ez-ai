@@ -123,12 +123,20 @@ func InitEnv() {
 	GeminiSafetySetting = GetEnvOrDefaultString("GEMINI_SAFETY_SETTING", "BLOCK_NONE")
 	CohereSafetySetting = GetEnvOrDefaultString("COHERE_SAFETY_SETTING", "NONE")
 
-	// Initialize rate limit variables
-	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", true)
+	initRateLimitSettings()
+	initConstantEnv()
+}
+
+func initRateLimitSettings() {
+	// APP_ENV=dev is for local development: every switchable limit defaults to
+	// off there, while an explicit *_RATE_LIMIT_ENABLE value still wins.
+	appEnv := strings.TrimSpace(os.Getenv("APP_ENV"))
+	DevEnvironment = strings.EqualFold(appEnv, "dev") || strings.EqualFold(appEnv, "development")
+	GlobalApiRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_API_RATE_LIMIT_ENABLE", !DevEnvironment)
 	GlobalApiRateLimitNum = GetEnvOrDefault("GLOBAL_API_RATE_LIMIT", 360)
 	GlobalApiRateLimitDuration = int64(GetEnvOrDefault("GLOBAL_API_RATE_LIMIT_DURATION", 180))
 
-	GlobalWebRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_WEB_RATE_LIMIT_ENABLE", true)
+	GlobalWebRateLimitEnable = GetEnvOrDefaultBool("GLOBAL_WEB_RATE_LIMIT_ENABLE", !DevEnvironment)
 	GlobalWebRateLimitNum = GetEnvOrDefault("GLOBAL_WEB_RATE_LIMIT", 120)
 	GlobalWebRateLimitDuration = int64(GetEnvOrDefault("GLOBAL_WEB_RATE_LIMIT_DURATION", 180))
 
@@ -136,14 +144,13 @@ func InitEnv() {
 	GlobalStaticRateLimitNum = GetEnvOrDefault("GLOBAL_STATIC_RATE_LIMIT", 1000)
 	GlobalStaticRateLimitDuration = int64(GetEnvOrDefault("GLOBAL_STATIC_RATE_LIMIT_DURATION", 180))
 
-	CriticalRateLimitEnable = GetEnvOrDefaultBool("CRITICAL_RATE_LIMIT_ENABLE", true)
+	CriticalRateLimitEnable = GetEnvOrDefaultBool("CRITICAL_RATE_LIMIT_ENABLE", !DevEnvironment)
 	CriticalRateLimitNum = GetEnvOrDefault("CRITICAL_RATE_LIMIT", 20)
 	CriticalRateLimitDuration = int64(GetEnvOrDefault("CRITICAL_RATE_LIMIT_DURATION", 20*60))
 
-	SearchRateLimitEnable = GetEnvOrDefaultBool("SEARCH_RATE_LIMIT_ENABLE", true)
+	SearchRateLimitEnable = GetEnvOrDefaultBool("SEARCH_RATE_LIMIT_ENABLE", !DevEnvironment)
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
-	initConstantEnv()
 }
 
 func initUserSessionSettings() {

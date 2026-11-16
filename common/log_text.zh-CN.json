@@ -265,6 +265,7 @@
   "Waffo webhook rejected reason=webhook_disabled path=%q client_ip=%s": "Waffo webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s",
   "Waffo webhook signature verification failed path=%q client_ip=%s signature=%q body=%q": "Waffo webhook 验签失败 path=%q client_ip=%s signature=%q body=%q",
   "Waffo webhook verified and parsed event_type=%s merchant_order_id=%s order_status=%s client_ip=%s": "Waffo webhook 验签并解析成功 event_type=%s merchant_order_id=%s order_status=%s client_ip=%s",
+  "Warning: APP_ENV=dev turns off the API, web, critical and search rate limits unless their *_RATE_LIMIT_ENABLE variables are set. Never use it in production.": "警告：APP_ENV=dev 已关闭 API、页面、关键接口和搜索限流（显式设置了对应 *_RATE_LIMIT_ENABLE 的除外）。生产环境切勿使用。",
   "Warning: Refresh cookie is not secure and refresh/logout Origin validation is disabled. Please set SESSION_COOKIE_SECURE=true in production.": "警告：SESSION_COOKIE_SECURE 未开启。登录 Cookie 可经 HTTP 明文传输，续期登录和退出登录接口接受任意来源（Origin）的请求。生产环境请设置 SESSION_COOKIE_SECURE=true。",
   "Warning: failed to migrate %s.%s to decimal: %v": "警告：把字段 %s.%s 的类型改为 decimal 失败: %v",
   "Warning: failed to query metadata for %s.%s: %v": "警告：查询字段 %s.%s 的类型信息失败: %v",

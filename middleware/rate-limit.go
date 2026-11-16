@@ -194,6 +194,20 @@ func CriticalRateLimit() func(c *gin.Context) {
 	return defNext
 }
 
+// LogoutRateLimitMark names the per-IP bucket used only by logout.
+const LogoutRateLimitMark = "LO"
+
+// LogoutRateLimit limits logout per IP in its own bucket. Logout only ends a
+// session, so it must not share the critical budget that login and the
+// refresh issued on every page load use up; otherwise users who reach that
+// limit cannot end their session.
+func LogoutRateLimit() func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, LogoutRateLimitMark)
+	}
+	return defNext
+}
+
 func UserCriticalRateLimit(scope string) func(c *gin.Context) {
 	if !common.CriticalRateLimitEnable {
 		return defNext

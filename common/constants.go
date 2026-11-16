@@ -94,6 +94,10 @@ var EmailLoginAuthServerList = []string{
 }
 
 var DebugEnabled bool
+
+// DevEnvironment is true when APP_ENV is dev or development. It is meant for
+// local development only: rate limits with an on/off switch default to off.
+var DevEnvironment bool
 var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true

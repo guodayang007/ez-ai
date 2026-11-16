@@ -93,6 +93,7 @@ cd web && bun run dev -- --port 5174
 
 ```
 PORT=3000
+APP_ENV=dev
 SQL_DSN=postgresql://root:123456@127.0.0.1:5433/ez-ai?sslmode=disable
 
 # 首次启动自动完成初始化，跳过 /setup 页面；已初始化后不再生效
@@ -112,6 +113,7 @@ DEFAULT_USER_PASSWORD=12345678
 - `SETUP_ROOT_*` 只在数据库还没有初始化时使用一次；之后修改不会改变 root 的密码，请在页面的个人设置里改。
 - `DEFAULT_USER_*` 只在该用户名不存在时创建账号；改密码不会影响已有账号，改用户名会在下次启动时新建一个账号。
 - 当前未配置 Redis（`REDIS_CONN_STRING`），使用内存缓存。
+- `APP_ENV=dev` 会默认关闭 API、页面、关键接口（登录、续期、退出登录等）和搜索限流，避免本地频繁刷新时登录返回 429；单独设置 `CRITICAL_RATE_LIMIT_ENABLE=true` 等可以重新打开某一项。生产环境不要设置。
 
 ## 6. 重置数据库
 

@@ -290,3 +290,35 @@ func TestGlobalWebRateLimitCountsFrontendFilesInStaticBucket(t *testing.T) {
 		assert.Equal(t, "1", webCount)
 	})
 }
+
+func TestLogoutRateLimitDoesNotShareCriticalBudget(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redisServer, _ := useRateLimitMiniRedis(t)
+	previousEnable, previousNum, previousDuration := common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration
+	t.Cleanup(func() {
+		common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = previousEnable, previousNum, previousDuration
+	})
+	common.CriticalRateLimitEnable, common.CriticalRateLimitNum, common.CriticalRateLimitDuration = true, 2, 47
+
+	router := gin.New()
+	require.NoError(t, router.SetTrustedProxies(nil))
+	router.GET("/refresh", CriticalRateLimit(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	router.GET("/logout", LogoutRateLimit(), func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	const clientIP = "192.0.2.80"
+	const remoteAddr = clientIP + ":12345"
+	for range 2 {
+		assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/refresh", remoteAddr).Code)
+	}
+	require.Equal(t, http.StatusTooManyRequests, performRateLimitRequest(router, "/refresh", remoteAddr).Code)
+
+	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/logout", remoteAddr).Code, "an exhausted login/refresh budget must not block logout")
+	assert.Equal(t, http.StatusNoContent, performRateLimitRequest(router, "/logout", remoteAddr).Code)
+	limited := performRateLimitRequest(router, "/logout", remoteAddr)
+	assert.Equal(t, http.StatusTooManyRequests, limited.Code, "logout keeps its own per-IP limit")
+	assert.Equal(t, "47", limited.Header().Get("Retry-After"))
+
+	logoutCount, err := redisServer.Get(redisIPRateLimitKey(LogoutRateLimitMark, clientIP))
+	require.NoError(t, err)
+	assert.Equal(t, "3", logoutCount)
+}

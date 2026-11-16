@@ -78,6 +78,12 @@ func LogStartupSuccess(startTime time.Time, host, port string) {
 		fmt.Fprintf(gin.DefaultWriter, "\n")
 	}
 
+	if DevEnvironment {
+		fmt.Fprintf(gin.DefaultWriter, "\n")
+		fmt.Fprintf(gin.DefaultWriter, "  \033[33m%s\033[0m\n", LogText("Warning: APP_ENV=dev turns off the API, web, critical and search rate limits unless their *_RATE_LIMIT_ENABLE variables are set. Never use it in production."))
+		fmt.Fprintf(gin.DefaultWriter, "\n")
+	}
+
 	fmt.Fprintf(gin.DefaultWriter, "\n")
 	fmt.Fprintf(gin.DefaultWriter, "  \033[32m%s %s\033[0m  %s\n", SystemName, Version, LogText("ready in %d ms", durationMs))
 	fmt.Fprintf(gin.DefaultWriter, "\n")

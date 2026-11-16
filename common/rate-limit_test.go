@@ -148,3 +148,45 @@ func TestInMemoryRateLimiterConcurrentInitializationAndRequests(t *testing.T) {
 	assert.Len(t, limiter.store, 1)
 	assert.Equal(t, 10, limiter.store["client"].requests.length)
 }
+
+func TestInitRateLimitSettingsAppEnv(t *testing.T) {
+	previous := []bool{DevEnvironment, GlobalApiRateLimitEnable, GlobalWebRateLimitEnable, GlobalStaticRateLimitEnable, CriticalRateLimitEnable, SearchRateLimitEnable}
+	t.Cleanup(func() {
+		DevEnvironment, GlobalApiRateLimitEnable, GlobalWebRateLimitEnable, GlobalStaticRateLimitEnable, CriticalRateLimitEnable, SearchRateLimitEnable =
+			previous[0], previous[1], previous[2], previous[3], previous[4], previous[5]
+	})
+
+	tests := []struct {
+		name           string
+		appEnv         string
+		criticalEnable string
+		wantDev        bool
+		wantEnabled    bool
+		wantCritical   bool
+	}{
+		{name: "unset keeps limits on", wantEnabled: true, wantCritical: true},
+		{name: "production keeps limits on", appEnv: "production", wantEnabled: true, wantCritical: true},
+		{name: "dev turns limits off", appEnv: "dev", wantDev: true},
+		{name: "development is case insensitive", appEnv: " Development ", wantDev: true},
+		{name: "explicit switch wins in dev", appEnv: "dev", criticalEnable: "true", wantDev: true, wantCritical: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("APP_ENV", tt.appEnv)
+			t.Setenv("GLOBAL_API_RATE_LIMIT_ENABLE", "")
+			t.Setenv("GLOBAL_WEB_RATE_LIMIT_ENABLE", "")
+			t.Setenv("GLOBAL_STATIC_RATE_LIMIT_ENABLE", "")
+			t.Setenv("SEARCH_RATE_LIMIT_ENABLE", "")
+			t.Setenv("CRITICAL_RATE_LIMIT_ENABLE", tt.criticalEnable)
+
+			initRateLimitSettings()
+
+			assert.Equal(t, tt.wantDev, DevEnvironment)
+			assert.Equal(t, tt.wantEnabled, GlobalApiRateLimitEnable)
+			assert.Equal(t, tt.wantEnabled, GlobalWebRateLimitEnable)
+			assert.Equal(t, tt.wantEnabled, SearchRateLimitEnable)
+			assert.Equal(t, tt.wantCritical, CriticalRateLimitEnable)
+			assert.False(t, GlobalStaticRateLimitEnable, "the static limit stays off by default in every environment")
+		})
+	}
+}
