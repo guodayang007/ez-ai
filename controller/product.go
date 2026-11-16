@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +32,7 @@ const (
 
 var (
 	productInputKeyPattern        = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	productFulfillmentPlanPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`)
+	productFulfillmentPlanPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 	productCurrencyPattern        = regexp.MustCompile(`^[A-Z]{3,8}$`)
 	productInputTypes             = map[string]bool{
 		model.ProductInputText:           true,
@@ -87,10 +88,6 @@ func normalizeProduct(product *model.Product) (string, map[string]any) {
 		sku.Tag = strings.TrimSpace(sku.Tag)
 		if utf8.RuneCountInString(sku.Tag) > 32 {
 			return "Tag cannot exceed 32 characters", nil
-		}
-		sku.FulfillmentPlan = strings.TrimSpace(sku.FulfillmentPlan)
-		if !productFulfillmentPlanPattern.MatchString(sku.FulfillmentPlan) {
-			return "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)", nil
 		}
 		sku.Currency = strings.ToUpper(strings.TrimSpace(sku.Currency))
 		if sku.Currency == "" {
@@ -266,17 +263,16 @@ func CreateProductOrder(c *gin.Context) {
 		return
 	}
 	order := &model.ProductOrder{
-		UserId:          userId,
-		ProductId:       product.Id,
-		SkuId:           sku.Id,
-		ProductTitle:    product.Title,
-		SkuName:         sku.Name,
-		PriceAmount:     sku.PriceAmount,
-		Currency:        sku.Currency,
-		InputFields:     product.InputFields,
-		FulfillmentPlan: sku.FulfillmentPlan,
-		Inputs:          inputs,
-		Remark:          req.Remark,
+		UserId:       userId,
+		ProductId:    product.Id,
+		SkuId:        sku.Id,
+		ProductTitle: product.Title,
+		SkuName:      sku.Name,
+		PriceAmount:  sku.PriceAmount,
+		Currency:     sku.Currency,
+		InputFields:  product.InputFields,
+		Inputs:       inputs,
+		Remark:       req.Remark,
 	}
 	if err := model.CreateProductOrder(order); err != nil {
 		common.ApiError(c, err)
@@ -526,13 +522,44 @@ func AdminUpdateProductOrder(c *gin.Context) {
 	common.ApiSuccess(c, updated)
 }
 
+// AdminListProductFulfillmentPlans returns the plan codes the fulfiller may
+// buy, for the admin to choose from on "Execute payment".
+func AdminListProductFulfillmentPlans(c *gin.Context) {
+	config := service.GetProductFulfillerConfig()
+	if !config.Enabled() {
+		common.ApiErrorT(c, "Automatic fulfillment is not configured")
+		return
+	}
+	plans, err := service.GetProductFulfillerPlans(config)
+	if err != nil {
+		common.SysError(common.LogText("failed to list fulfiller plans: %s", err.Error()))
+		common.ApiErrorT(c, "The fulfillment service is unavailable")
+		return
+	}
+	common.ApiSuccess(c, gin.H{"plans": plans})
+}
+
+type productExecutePaymentRequest struct {
+	Plan string `json:"plan"`
+}
+
 // AdminExecuteProductOrderPayment starts the automatic purchase of a paid
-// order: the fulfiller service pays for the SKU's plan with the DogPay card on
-// the buyer's ChatGPT account and reports back through
+// order: the fulfiller service pays for the plan the admin chose with the
+// DogPay card on the buyer's ChatGPT account and reports back through
 // ProductFulfillmentCallback.
 func AdminExecuteProductOrderPayment(c *gin.Context) {
 	id, ok := productIdParam(c)
 	if !ok {
+		return
+	}
+	var req productExecutePaymentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiErrorT(c, "Invalid parameters")
+		return
+	}
+	req.Plan = strings.TrimSpace(req.Plan)
+	if !productFulfillmentPlanPattern.MatchString(req.Plan) {
+		common.ApiErrorT(c, "Choose a plan to buy")
 		return
 	}
 	config := service.GetProductFulfillerConfig()
@@ -547,10 +574,6 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 	}
 	if err != nil {
 		common.ApiError(c, err)
-		return
-	}
-	if order.FulfillmentPlan == "" {
-		common.ApiErrorT(c, "This specification has no fulfillment plan, deliver it manually")
 		return
 	}
 	if !model.CanStartProductFulfillment(order) {
@@ -571,8 +594,20 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 			return
 		}
 	}
+	// Check the plan before touching the order, so a stale choice leaves the
+	// order as it was instead of recording a failed purchase.
+	plans, err := service.GetProductFulfillerPlans(config)
+	if err != nil {
+		common.SysError(common.LogText("failed to list fulfiller plans: %s", err.Error()))
+		common.ApiErrorT(c, "The fulfillment service is unavailable")
+		return
+	}
+	if !slices.Contains(plans, req.Plan) {
+		common.ApiErrorT(c, "The fulfillment service does not offer this plan")
+		return
+	}
 
-	if err := model.StartProductOrderFulfillment(id, order.Status, order.FulfillmentStatus); err != nil {
+	if err := model.StartProductOrderFulfillment(id, req.Plan, order.Status, order.FulfillmentStatus); err != nil {
 		if errors.Is(err, model.ErrProductOrderStatusConflict) {
 			common.ApiErrorT(c, "Order status has changed, please refresh")
 			return
@@ -582,7 +617,7 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 	}
 	submitErr := service.SubmitProductFulfillment(config, service.ProductFulfillmentJob{
 		TradeNo:     order.TradeNo,
-		Plan:        order.FulfillmentPlan,
+		Plan:        req.Plan,
 		AccessToken: accessToken,
 	})
 	if submitErr != nil {

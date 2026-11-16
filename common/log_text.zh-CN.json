@@ -874,5 +874,6 @@
   "failed to submit product order %s to fulfiller: %s": "商品订单 %s 提交给开通服务失败：%s",
   "failed to record fulfiller failure of product order %s: %s": "记录商品订单 %s 的开通失败结果时出错：%s",
   "ignored fulfiller result for product order %s: order is no longer running": "已忽略商品订单 %s 的开通结果：订单已不在开通中",
-  "failed to record fulfiller result of product order %s: %s": "记录商品订单 %s 的开通结果时出错：%s"
+  "failed to record fulfiller result of product order %s: %s": "记录商品订单 %s 的开通结果时出错：%s",
+  "failed to list fulfiller plans: %s": "获取开通服务的套餐列表失败：%s"
 }

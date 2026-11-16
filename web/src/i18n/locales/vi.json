@@ -7930,19 +7930,21 @@
     "Paying": "Đang thanh toán",
     "Paid automatically": "Đã thanh toán tự động",
     "Payment failed": "Thanh toán thất bại",
-    "Fulfillment plan": "Mã gói kích hoạt",
-    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "Chỉ dùng chữ cái, chữ số, dấu chấm, gạch ngang và gạch dưới (tối đa 64 ký tự)",
-    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "Mã gói mà \"Thực hiện thanh toán\" mua bằng DogPay. Mã phải có trong ALLOWED_PLANS của dịch vụ kích hoạt. Để trống để giao thủ công",
+    "Fulfillment plan": "Gói kích hoạt",
     "Automatic payment": "Thanh toán tự động",
     "Automatic payment result": "Kết quả thanh toán tự động",
     "Payment started. The order completes automatically once DogPay pays": "Đã bắt đầu thanh toán. Đơn hàng sẽ tự hoàn tất khi DogPay thanh toán xong",
-    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "Mua {{plan}} bằng thẻ DogPay cho đơn {{tradeNo}} ({{product}}, người mua đã trả {{price}})? Thẻ sẽ bị trừ tiền ngay",
     "Pay with DogPay": "Thanh toán bằng DogPay",
-    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "Mã gói kích hoạt chỉ được chứa chữ cái, chữ số, dấu chấm, gạch ngang và gạch dưới (tối đa 64)",
     "Automatic fulfillment is not configured": "Chưa cấu hình dịch vụ kích hoạt tự động",
-    "This specification has no fulfillment plan, deliver it manually": "Quy cách này chưa có mã gói kích hoạt, hãy giao thủ công",
     "Only paid orders, or orders whose automatic payment failed, can be paid": "Chỉ đơn đã thanh toán hoặc đơn thanh toán tự động thất bại mới có thể thực hiện thanh toán",
     "This order has no ChatGPT session": "Đơn hàng này không có phiên ChatGPT",
-    "The fulfillment service did not accept the order": "Dịch vụ kích hoạt không nhận đơn hàng"
+    "The fulfillment service did not accept the order": "Dịch vụ kích hoạt không nhận đơn hàng",
+    "Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with the DogPay card. The card is charged as soon as you confirm": "Thanh toán đơn hàng {{tradeNo}} ({{product}}, người mua đã trả {{price}}) bằng thẻ DogPay. Thẻ sẽ bị trừ tiền ngay khi bạn xác nhận",
+    "Plan to buy": "Gói cần mua",
+    "Loading plans...": "Đang tải các gói...",
+    "The fulfillment service offers no plans. Add plan codes to its ALLOWED_PLANS": "Dịch vụ kích hoạt không có gói nào. Hãy thêm mã gói vào ALLOWED_PLANS của dịch vụ",
+    "Choose a plan to buy": "Hãy chọn gói cần mua",
+    "The fulfillment service does not offer this plan": "Dịch vụ kích hoạt không hỗ trợ gói này",
+    "The fulfillment service is unavailable": "Dịch vụ kích hoạt không khả dụng"
   }
 }

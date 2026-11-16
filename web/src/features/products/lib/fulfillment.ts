@@ -19,12 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ProductOrder } from '../types'
 
 /**
- * Whether "Execute payment" may buy the order's plan with the DogPay card.
+ * Whether "Execute payment" may buy a plan for the order with the DogPay card.
  * Mirrors CanStartProductFulfillment in model/product.go: the buyer has paid,
  * or an earlier automatic attempt failed.
  */
 export function canExecutePayment(order: ProductOrder): boolean {
-  if (!order.fulfillment_plan) return false
   const fulfillment = order.fulfillment_status ?? ''
   if (order.status === 'paid') {
     return fulfillment === '' || fulfillment === 'failed'

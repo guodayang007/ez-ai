@@ -29,6 +29,7 @@ export const PRODUCT_QUERY_KEYS = {
   adminOrders: ['admin-product-orders'] as const,
   storeProducts: ['store-products'] as const,
   selfOrders: ['self-product-orders'] as const,
+  fulfillmentPlans: ['product-fulfillment-plans'] as const,
 }
 
 // labelKey values are i18n keys; render them with t(config.labelKey).

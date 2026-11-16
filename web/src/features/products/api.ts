@@ -106,11 +106,20 @@ export async function getAdminProductOrders(
   return res.data
 }
 
-/** Asks the fulfiller service to buy the order's plan with the DogPay card. */
+/** Plan codes the fulfiller service may buy (its ALLOWED_PLANS). */
+export async function getProductFulfillmentPlans(): Promise<
+  ApiResponse<{ plans: string[] }>
+> {
+  const res = await api.get('/api/product/admin/fulfillment/plans')
+  return res.data
+}
+
+/** Asks the fulfiller service to buy plan for the order with the DogPay card. */
 export async function executeProductOrderPayment(
-  id: number
+  id: number,
+  plan: string
 ): Promise<ApiResponse<ProductOrder>> {
-  const res = await api.post(`/api/product/admin/orders/${id}/pay`)
+  const res = await api.post(`/api/product/admin/orders/${id}/pay`, { plan })
   return res.data
 }
 

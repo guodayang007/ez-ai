@@ -42,8 +42,6 @@ export type ProductSku = {
   original_price: number
   currency: string
   tag: string
-  /** Upstream plan code bought automatically; empty means manual delivery. */
-  fulfillment_plan: string
   enabled: boolean
   sort_order: number
 }

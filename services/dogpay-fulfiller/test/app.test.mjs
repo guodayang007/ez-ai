@@ -85,6 +85,19 @@ test('plan outside ALLOWED_PLANS is refused', async () => {
   assert.equal(purchases.length, 0)
 })
 
+test('plan list is signed and returns ALLOWED_PLANS in order', async () => {
+  const getPlans = (secret) => {
+    const timestamp = Math.floor(Date.now() / 1000)
+    return fetch(`${baseUrl}/v1/plans`, {
+      headers: { [TIMESTAMP_HEADER]: String(timestamp), [SIGNATURE_HEADER]: sign(secret, timestamp, '') },
+    })
+  }
+  assert.equal((await getPlans('another-secret-another-secret-xx')).status, 401)
+  const res = await getPlans(SECRET)
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { plans: ['chatgptplusplan', 'chatgptproplan'] })
+})
+
 test('accepted job is purchased once and its signed result is posted back', async () => {
   purchases = []
   callbacks = []

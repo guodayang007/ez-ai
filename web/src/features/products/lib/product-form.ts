@@ -27,8 +27,6 @@ import type {
 } from '../types'
 
 export const PRODUCT_INPUT_KEY_PATTERN = /^[a-z][a-z0-9_]{0,31}$/
-// Mirrors productFulfillmentPlanPattern in controller/product.go.
-export const PRODUCT_FULFILLMENT_PLAN_PATTERN = /^[A-Za-z0-9_.-]{0,64}$/
 
 export function getProductFormSchema(t: TFunction) {
   const inputFieldSchema = z.object({
@@ -77,15 +75,6 @@ export function getProductFormSchema(t: TFunction) {
         .min(0, t('Price cannot be negative'))
         .max(1000000, t('Price cannot exceed 1000000')),
       tag: z.string().trim().max(32, t('Tag cannot exceed 32 characters')),
-      fulfillment_plan: z
-        .string()
-        .trim()
-        .regex(
-          PRODUCT_FULFILLMENT_PLAN_PATTERN,
-          t(
-            'Use letters, digits, dots, dashes and underscores (max 64 characters)'
-          )
-        ),
       currency: z
         .string()
         .trim()
@@ -162,7 +151,6 @@ export function createEmptySku(): ProductSkuFormValues {
     original_price: 0,
     currency: 'USD',
     tag: '',
-    fulfillment_plan: '',
     enabled: true,
     sort_order: 0,
   }
@@ -187,7 +175,6 @@ function skuToFormValues(sku: ProductSku): ProductSkuFormValues {
     original_price: sku.original_price ?? 0,
     currency: sku.currency,
     tag: sku.tag ?? '',
-    fulfillment_plan: sku.fulfillment_plan ?? '',
     enabled: sku.enabled,
     sort_order: sku.sort_order,
   }

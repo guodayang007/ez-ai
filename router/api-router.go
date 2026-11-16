@@ -227,6 +227,7 @@ func SetApiRouter(router *gin.Engine) {
 			productAdminRoute.GET("/orders", controller.AdminListProductOrders)
 			productAdminRoute.PUT("/orders/:id", controller.AdminUpdateProductOrder)
 			productAdminRoute.POST("/orders/:id/pay", middleware.CriticalRateLimit(), controller.AdminExecuteProductOrderPayment)
+			productAdminRoute.GET("/fulfillment/plans", controller.AdminListProductFulfillmentPlans)
 		}
 
 		// Subscription payment callbacks (no auth)

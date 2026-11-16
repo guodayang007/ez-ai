@@ -90,14 +90,11 @@ type ProductSku struct {
 	OriginalPrice float64 `json:"original_price"`
 	Currency      string  `json:"currency" gorm:"type:varchar(8)"`
 	// Tag is a short badge shown next to the price, such as a delivery note.
-	Tag string `json:"tag" gorm:"type:varchar(64)"`
-	// FulfillmentPlan is the upstream plan code the fulfiller service buys
-	// for this SKU, such as a ChatGPT plan name. Empty means manual delivery.
-	FulfillmentPlan string `json:"fulfillment_plan" gorm:"type:varchar(64)"`
-	Enabled         bool   `json:"enabled"`
-	SortOrder       int    `json:"sort_order"`
-	CreatedAt       int64  `json:"created_at"`
-	UpdatedAt       int64  `json:"updated_at"`
+	Tag       string `json:"tag" gorm:"type:varchar(64)"`
+	Enabled   bool   `json:"enabled"`
+	SortOrder int    `json:"sort_order"`
+	CreatedAt int64  `json:"created_at"`
+	UpdatedAt int64  `json:"updated_at"`
 }
 
 type ProductOrder struct {
@@ -126,8 +123,8 @@ type ProductOrder struct {
 	UpdatedAt    int64  `json:"updated_at"`
 	CompletedAt  int64  `json:"completed_at"`
 
-	// Automatic fulfillment. FulfillmentPlan is snapshotted from the SKU at
-	// order time; the other fields are admin-only and cleared by RedactForBuyer.
+	// Automatic fulfillment, admin-only and cleared by RedactForBuyer.
+	// FulfillmentPlan is the plan code the admin chose on "Execute payment".
 	FulfillmentPlan      string `json:"fulfillment_plan,omitempty" gorm:"type:varchar(64)"`
 	FulfillmentStatus    string `json:"fulfillment_status,omitempty" gorm:"type:varchar(16)"`
 	FulfillmentMessage   string `json:"fulfillment_message,omitempty" gorm:"type:text"`
@@ -327,15 +324,14 @@ func SaveProduct(product *Product) error {
 			if sku.Id != 0 && existingIds[sku.Id] {
 				keptIds[sku.Id] = true
 				if err := tx.Model(&ProductSku{}).Where("id = ?", sku.Id).Updates(map[string]any{
-					"name":             sku.Name,
-					"price_amount":     sku.PriceAmount,
-					"original_price":   sku.OriginalPrice,
-					"currency":         sku.Currency,
-					"tag":              sku.Tag,
-					"fulfillment_plan": sku.FulfillmentPlan,
-					"enabled":          sku.Enabled,
-					"sort_order":       sku.SortOrder,
-					"updated_at":       now,
+					"name":           sku.Name,
+					"price_amount":   sku.PriceAmount,
+					"original_price": sku.OriginalPrice,
+					"currency":       sku.Currency,
+					"tag":            sku.Tag,
+					"enabled":        sku.Enabled,
+					"sort_order":     sku.SortOrder,
+					"updated_at":     now,
 				}).Error; err != nil {
 					return err
 				}
@@ -552,9 +548,6 @@ func (o *ProductOrder) ChatGPTAccessToken() string {
 // CanStartProductFulfillment reports whether "Execute payment" may run: the
 // buyer has paid, or an earlier automatic attempt failed while processing.
 func CanStartProductFulfillment(order *ProductOrder) bool {
-	if order.FulfillmentPlan == "" {
-		return false
-	}
 	switch order.Status {
 	case ProductOrderPaid:
 		return order.FulfillmentStatus == "" || order.FulfillmentStatus == ProductFulfillmentFailed
@@ -565,10 +558,10 @@ func CanStartProductFulfillment(order *ProductOrder) bool {
 }
 
 // StartProductOrderFulfillment moves the order to processing and marks the
-// automatic purchase as running. It only applies while the order still has
+// automatic purchase of plan as running. It only applies while the order still has
 // the status and fulfillment state the admin saw, so one card charge is
 // started per click even when two admins act at once.
-func StartProductOrderFulfillment(id int, fromStatus, fromFulfillment string) error {
+func StartProductOrderFulfillment(id int, plan, fromStatus, fromFulfillment string) error {
 	now := common.GetTimestamp()
 	query := DB.Model(&ProductOrder{}).Where("id = ? AND status = ?", id, fromStatus)
 	if fromFulfillment == "" {
@@ -579,6 +572,7 @@ func StartProductOrderFulfillment(id int, fromStatus, fromFulfillment string) er
 	}
 	result := query.Updates(map[string]any{
 		"status":                 ProductOrderProcessing,
+		"fulfillment_plan":       plan,
 		"fulfillment_status":     ProductFulfillmentRunning,
 		"fulfillment_message":    "",
 		"fulfillment_started_at": now,

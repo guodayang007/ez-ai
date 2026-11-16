@@ -217,7 +217,11 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 		assert.True(t, service.VerifyProductFulfillerSignature(secret,
 			r.Header.Get(service.ProductFulfillerTimestampHeader),
 			r.Header.Get(service.ProductFulfillerSignatureHeader), body, time.Now()),
-			"jobs sent to the fulfiller are signed")
+			"requests sent to the fulfiller are signed")
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/plans" {
+			_, _ = w.Write([]byte(`{"plans":["chatgptplusplan","chatgptpro"]}`))
+			return
+		}
 		var job service.ProductFulfillmentJob
 		require.NoError(t, common.Unmarshal(body, &job))
 		received = append(received, job)
@@ -237,8 +241,7 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 		Enabled:     true,
 		InputFields: []model.ProductInputField{{Key: "session", Label: "Session", Type: model.ProductInputChatGPTSession, Required: true}},
 		Skus: []model.ProductSku{
-			{Name: "Plus", PriceAmount: 42.99, Currency: "USD", Enabled: true, FulfillmentPlan: " chatgptplusplan "},
-			{Name: "Manual", PriceAmount: 10, Currency: "USD", Enabled: true},
+			{Name: "Plus", PriceAmount: 42.99, Currency: "USD", Enabled: true},
 		},
 	}
 	msg, _ := normalizeProduct(product)
@@ -270,28 +273,38 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 		return recorder.Code
 	}
 
-	manual := placeOrder(product.Skus[1].Id)
-	require.True(t, callProductHandler(t, AdminUpdateProductOrder, 1, manual.Id, `{"status":"paid"}`).Success)
-	noPlan := callProductHandler(t, AdminExecuteProductOrderPayment, 1, manual.Id, "")
-	assert.Equal(t, "This specification has no fulfillment plan, deliver it manually", noPlan.Message)
+	plans := callProductHandler(t, AdminListProductFulfillmentPlans, 1, 0, "")
+	require.True(t, plans.Success, plans.Message)
+	assert.JSONEq(t, `{"plans":["chatgptplusplan","chatgptpro"]}`, string(plans.Data))
 
+	const payPlus = `{"plan":" chatgptplusplan "}`
 	order := placeOrder(product.Skus[0].Id)
-	unpaid := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	unpaid := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	assert.False(t, unpaid.Success, "a pending order is not paid for until the buyer has paid")
 	require.True(t, callProductHandler(t, AdminUpdateProductOrder, 1, order.Id, `{"status":"paid"}`).Success)
 
+	noPlan := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, `{"plan":""}`)
+	assert.Equal(t, "Choose a plan to buy", noPlan.Message)
+	notOffered := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, `{"plan":"chatgptteamplan"}`)
+	assert.Equal(t, "The fulfillment service does not offer this plan", notOffered.Message)
+	stored, err := model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductOrderPaid, stored.Status, "a rejected plan leaves the order untouched")
+	assert.Empty(t, received)
+
 	// The fulfiller is down: the attempt is recorded as failed and can be retried.
 	rejectJobs = true
-	down := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	down := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	assert.Equal(t, "The fulfillment service did not accept the order", down.Message)
-	stored, err := model.GetProductOrder(order.Id)
+	stored, err = model.GetProductOrder(order.Id)
 	require.NoError(t, err)
 	assert.Equal(t, model.ProductOrderProcessing, stored.Status)
 	assert.Equal(t, model.ProductFulfillmentFailed, stored.FulfillmentStatus)
 	assert.Contains(t, stored.FulfillmentMessage, "HTTP 503")
+	assert.Equal(t, "chatgptplusplan", stored.FulfillmentPlan, "the chosen plan is recorded on the order")
 
 	rejectJobs = false
-	started := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	started := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	require.True(t, started.Success, started.Message)
 	require.Len(t, received, 2)
 	assert.Equal(t, service.ProductFulfillmentJob{
@@ -301,7 +314,7 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 		CallbackURL: "https://ez-ai.test/api/product/fulfillment/callback",
 	}, received[1])
 
-	again := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	again := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	assert.False(t, again.Success, "a running purchase cannot be started twice")
 	require.Len(t, received, 2, "the card is not charged a second time")
 

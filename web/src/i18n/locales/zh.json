@@ -7930,19 +7930,21 @@
     "Paying": "支付中",
     "Paid automatically": "已自动支付",
     "Payment failed": "支付失败",
-    "Fulfillment plan": "开通套餐代码",
-    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "仅可使用字母、数字、点、短横线和下划线（最多 64 个字符）",
-    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "“执行支付”时用 DogPay 购买的套餐代码，必须在开通服务的 ALLOWED_PLANS 中。留空表示人工交付",
+    "Fulfillment plan": "开通套餐",
     "Automatic payment": "自动支付",
     "Automatic payment result": "自动支付结果",
     "Payment started. The order completes automatically once DogPay pays": "已开始支付，DogPay 付款成功后订单会自动完成",
-    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "确认用 DogPay 卡为订单 {{tradeNo}}（{{product}}，买家已付 {{price}}）购买 {{plan}}？将立即从卡上扣款",
     "Pay with DogPay": "用 DogPay 支付",
-    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "开通套餐代码只能包含字母、数字、点、短横线和下划线（最多 64 个字符）",
     "Automatic fulfillment is not configured": "未配置自动开通服务",
-    "This specification has no fulfillment plan, deliver it manually": "该规格未设置开通套餐代码，请人工交付",
     "Only paid orders, or orders whose automatic payment failed, can be paid": "只有已支付的订单，或自动支付失败的订单才能执行支付",
     "This order has no ChatGPT session": "该订单没有 ChatGPT Session",
-    "The fulfillment service did not accept the order": "开通服务未接受该订单"
+    "The fulfillment service did not accept the order": "开通服务未接受该订单",
+    "Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with the DogPay card. The card is charged as soon as you confirm": "用 DogPay 卡为订单 {{tradeNo}}（{{product}}，买家已付 {{price}}）付款，确认后立即从卡上扣款",
+    "Plan to buy": "购买套餐",
+    "Loading plans...": "正在加载套餐...",
+    "The fulfillment service offers no plans. Add plan codes to its ALLOWED_PLANS": "开通服务没有可购买的套餐，请在其 ALLOWED_PLANS 中添加套餐代码",
+    "Choose a plan to buy": "请选择要购买的套餐",
+    "The fulfillment service does not offer this plan": "开通服务不支持该套餐",
+    "The fulfillment service is unavailable": "开通服务不可用"
   }
 }

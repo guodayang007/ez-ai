@@ -91,27 +91,14 @@ type ProductFulfillmentJob struct {
 // SubmitProductFulfillment hands a job to the fulfiller. The fulfiller
 // accepts it and reports the result later through the callback.
 func SubmitProductFulfillment(config ProductFulfillerConfig, job ProductFulfillmentJob) error {
-	if !config.Enabled() {
-		return ErrProductFulfillerNotConfigured
-	}
 	job.CallbackURL = config.CallbackURL
 	body, err := common.Marshal(job)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, config.URL+"/v1/fulfillments", bytes.NewReader(body))
+	resp, err := sendProductFulfillerRequest(config, http.MethodPost, "/v1/fulfillments", body)
 	if err != nil {
 		return err
-	}
-	timestamp := time.Now().Unix()
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(ProductFulfillerTimestampHeader, strconv.FormatInt(timestamp, 10))
-	req.Header.Set(ProductFulfillerSignatureHeader, SignProductFulfillerPayload(config.Secret, timestamp, body))
-
-	client := &http.Client{Timeout: productFulfillerRequestTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("fulfiller request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusAccepted || resp.StatusCode == http.StatusOK {
@@ -119,4 +106,49 @@ func SubmitProductFulfillment(config ProductFulfillerConfig, job ProductFulfillm
 	}
 	detail, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("fulfiller rejected the job: HTTP %d %s", resp.StatusCode, strings.TrimSpace(string(detail)))
+}
+
+// GetProductFulfillerPlans returns the plan codes the fulfiller may buy
+// (its ALLOWED_PLANS), which the admin picks from on "Execute payment".
+func GetProductFulfillerPlans(config ProductFulfillerConfig) ([]string, error) {
+	resp, err := sendProductFulfillerRequest(config, http.MethodGet, "/v1/plans", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fulfiller plan list returned HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Plans []string `json:"plans"`
+	}
+	if err := common.DecodeJson(io.LimitReader(resp.Body, 64*1024), &payload); err != nil {
+		return nil, fmt.Errorf("fulfiller plan list is not valid JSON: %w", err)
+	}
+	return payload.Plans, nil
+}
+
+// sendProductFulfillerRequest sends a request signed over its body (empty
+// for GET) to the fulfiller.
+func sendProductFulfillerRequest(config ProductFulfillerConfig, method, path string, body []byte) (*http.Response, error) {
+	if !config.Enabled() {
+		return nil, ErrProductFulfillerNotConfigured
+	}
+	req, err := http.NewRequest(method, config.URL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	timestamp := time.Now().Unix()
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set(ProductFulfillerTimestampHeader, strconv.FormatInt(timestamp, 10))
+	req.Header.Set(ProductFulfillerSignatureHeader, SignProductFulfillerPayload(config.Secret, timestamp, body))
+
+	client := &http.Client{Timeout: productFulfillerRequestTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fulfiller request failed: %w", err)
+	}
+	return resp, nil
 }

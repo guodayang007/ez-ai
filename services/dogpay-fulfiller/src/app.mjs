@@ -86,6 +86,17 @@ export function createApp(deps) {
       reply(200, { ok: true, active: active.size })
       return
     }
+    if (req.method === 'GET' && url.pathname === '/v1/plans') {
+      // Signed like a job, over an empty body. ez-ai lists these for the
+      // admin to choose from on "Execute payment".
+      const nowSeconds = Math.floor(Date.now() / 1000)
+      if (!verify(deps.config.secret, req.headers[TIMESTAMP_HEADER], req.headers[SIGNATURE_HEADER], Buffer.alloc(0), nowSeconds)) {
+        reply(401, { error: 'bad signature' })
+        return
+      }
+      reply(200, { plans: [...deps.config.allowedPlans] })
+      return
+    }
     if (req.method !== 'POST' || url.pathname !== '/v1/fulfillments') {
       reply(404, { error: 'not found' })
       return

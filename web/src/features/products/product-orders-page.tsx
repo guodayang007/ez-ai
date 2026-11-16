@@ -16,57 +16,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { CreditCard, Eye, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SectionPageLayout } from '@/components/layout'
 import { Button } from '@/components/ui/button'
-import { toIntlLocale } from '@/i18n/languages'
-import { handleServerError } from '@/lib/handle-server-error'
-import { createServerError } from '@/lib/server-error-message'
 
-import { executeProductOrderPayment, getAdminProductOrders } from './api'
+import { getAdminProductOrders } from './api'
 import { OrderManageDialog } from './components/order-manage-dialog'
+import { OrderPaymentDialog } from './components/order-payment-dialog'
 import { OrderStatusDialog } from './components/order-status-dialog'
 import { OrdersTable } from './components/orders-table'
 import { PRODUCT_ORDER_TRANSITIONS, PRODUCT_QUERY_KEYS } from './constants'
-import { formatProductPrice } from './lib/format'
 import { canExecutePayment } from './lib/fulfillment'
 import type { ProductOrder } from './types'
 
 const route = getRouteApi('/_authenticated/product-orders/')
 
 export function ProductOrdersPage() {
-  const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
-  const queryClient = useQueryClient()
+  const { t } = useTranslation()
   const [selected, setSelected] = useState<ProductOrder | null>(null)
   const [statusTarget, setStatusTarget] = useState<ProductOrder | null>(null)
   const [payTarget, setPayTarget] = useState<ProductOrder | null>(null)
-
-  const payMutation = useMutation({
-    mutationFn: async (order: ProductOrder) => {
-      const result = await executeProductOrderPayment(order.id)
-      if (!result.success) throw createServerError(result)
-    },
-    onSuccess: () => {
-      toast.success(
-        t('Payment started. The order completes automatically once DogPay pays')
-      )
-      setPayTarget(null)
-    },
-    onError: (error) => handleServerError(error),
-    // A rejected attempt is also recorded on the order, so refresh either way.
-    onSettled: () =>
-      queryClient.invalidateQueries({
-        queryKey: PRODUCT_QUERY_KEYS.adminOrders,
-      }),
-  })
 
   return (
     <>
@@ -123,30 +96,9 @@ export function ProductOrdersPage() {
         order={statusTarget}
         onOpenChange={(open) => !open && setStatusTarget(null)}
       />
-      <ConfirmDialog
-        open={payTarget !== null}
+      <OrderPaymentDialog
+        order={payTarget}
         onOpenChange={(open) => !open && setPayTarget(null)}
-        title={t('Execute payment')}
-        desc={
-          payTarget
-            ? t(
-                'Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately',
-                {
-                  plan: payTarget.fulfillment_plan,
-                  tradeNo: payTarget.trade_no,
-                  product: `${payTarget.product_title} · ${payTarget.sku_name}`,
-                  price: formatProductPrice(
-                    payTarget.price_amount,
-                    payTarget.currency,
-                    locale
-                  ),
-                }
-              )
-            : ''
-        }
-        confirmText={t('Pay with DogPay')}
-        isLoading={payMutation.isPending}
-        handleConfirm={() => payTarget && payMutation.mutate(payTarget)}
       />
     </>
   )

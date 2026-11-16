@@ -40,18 +40,13 @@ function order(overrides: Partial<ProductOrder>): ProductOrder {
     created_at: 0,
     updated_at: 0,
     completed_at: 0,
-    fulfillment_plan: 'chatgptplusplan',
     ...overrides,
   }
 }
 
 describe('canExecutePayment', () => {
-  test('paid order with a plan and no attempt can be paid', () => {
+  test('paid order with no attempt can be paid', () => {
     expect(canExecutePayment(order({}))).toBe(true)
-  })
-
-  test('order without a fulfillment plan cannot be paid automatically', () => {
-    expect(canExecutePayment(order({ fulfillment_plan: '' }))).toBe(false)
   })
 
   test('pending order cannot be paid before the buyer pays', () => {

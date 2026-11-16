@@ -7931,18 +7931,20 @@
     "Paid automatically": "Paid automatically",
     "Payment failed": "Payment failed",
     "Fulfillment plan": "Fulfillment plan",
-    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "Use letters, digits, dots, dashes and underscores (max 64 characters)",
-    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually",
     "Automatic payment": "Automatic payment",
     "Automatic payment result": "Automatic payment result",
     "Payment started. The order completes automatically once DogPay pays": "Payment started. The order completes automatically once DogPay pays",
-    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately",
     "Pay with DogPay": "Pay with DogPay",
-    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)",
     "Automatic fulfillment is not configured": "Automatic fulfillment is not configured",
-    "This specification has no fulfillment plan, deliver it manually": "This specification has no fulfillment plan, deliver it manually",
     "Only paid orders, or orders whose automatic payment failed, can be paid": "Only paid orders, or orders whose automatic payment failed, can be paid",
     "This order has no ChatGPT session": "This order has no ChatGPT session",
-    "The fulfillment service did not accept the order": "The fulfillment service did not accept the order"
+    "The fulfillment service did not accept the order": "The fulfillment service did not accept the order",
+    "Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with the DogPay card. The card is charged as soon as you confirm": "Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with the DogPay card. The card is charged as soon as you confirm",
+    "Plan to buy": "Plan to buy",
+    "Loading plans...": "Loading plans...",
+    "The fulfillment service offers no plans. Add plan codes to its ALLOWED_PLANS": "The fulfillment service offers no plans. Add plan codes to its ALLOWED_PLANS",
+    "Choose a plan to buy": "Choose a plan to buy",
+    "The fulfillment service does not offer this plan": "The fulfillment service does not offer this plan",
+    "The fulfillment service is unavailable": "The fulfillment service is unavailable"
   }
 }

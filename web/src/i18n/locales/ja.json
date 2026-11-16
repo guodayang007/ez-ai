@@ -7930,19 +7930,21 @@
     "Paying": "支払い中",
     "Paid automatically": "自動支払い済み",
     "Payment failed": "支払い失敗",
-    "Fulfillment plan": "開通プランコード",
-    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "英数字、ドット、ハイフン、アンダースコアのみ使用できます（最大 64 文字）",
-    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "「支払いを実行」で DogPay により購入するプランコード。開通サービスの ALLOWED_PLANS に含まれている必要があります。空欄の場合は手動で納品します",
+    "Fulfillment plan": "開通プラン",
     "Automatic payment": "自動支払い",
     "Automatic payment result": "自動支払いの結果",
     "Payment started. The order completes automatically once DogPay pays": "支払いを開始しました。DogPay の支払いが完了すると注文は自動で完了します",
-    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "注文 {{tradeNo}}（{{product}}、購入者の支払額 {{price}}）のために DogPay カードで {{plan}} を購入しますか？カードには即時に請求されます",
     "Pay with DogPay": "DogPay で支払う",
-    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "開通プランコードには英数字、ドット、ハイフン、アンダースコアのみ使用できます（最大 64 文字）",
     "Automatic fulfillment is not configured": "自動開通サービスが設定されていません",
-    "This specification has no fulfillment plan, deliver it manually": "この仕様には開通プランコードがありません。手動で納品してください",
     "Only paid orders, or orders whose automatic payment failed, can be paid": "支払い済みの注文、または自動支払いに失敗した注文のみ支払いを実行できます",
     "This order has no ChatGPT session": "この注文には ChatGPT セッションがありません",
-    "The fulfillment service did not accept the order": "開通サービスが注文を受け付けませんでした"
+    "The fulfillment service did not accept the order": "開通サービスが注文を受け付けませんでした",
+    "Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with the DogPay card. The card is charged as soon as you confirm": "DogPay カードで注文 {{tradeNo}}（{{product}}、購入者の支払額 {{price}}）を支払います。確認するとすぐにカードに請求されます",
+    "Plan to buy": "購入するプラン",
+    "Loading plans...": "プランを読み込み中...",
+    "The fulfillment service offers no plans. Add plan codes to its ALLOWED_PLANS": "開通サービスに購入可能なプランがありません。ALLOWED_PLANS にプランコードを追加してください",
+    "Choose a plan to buy": "購入するプランを選択してください",
+    "The fulfillment service does not offer this plan": "開通サービスはこのプランに対応していません",
+    "The fulfillment service is unavailable": "開通サービスを利用できません"
   }
 }

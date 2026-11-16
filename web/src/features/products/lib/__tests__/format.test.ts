@@ -29,7 +29,6 @@ function sku(id: number, price: number): ProductSku {
     price_amount: price,
     original_price: 0,
     tag: '',
-    fulfillment_plan: '',
     currency: 'USD',
     enabled: true,
     sort_order: 0,
