@@ -67,6 +67,8 @@ func SetApiRouter(router *gin.Engine) {
 		// :env separates test vs prod URLs so the operator can register each
 		// in Pancake's matching webhook slot; handler enforces env match.
 		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
+		// Signed result callback from the product fulfiller service.
+		apiRouter.POST("/product/fulfillment/callback", anonymousRequestBodyLimit, controller.ProductFulfillmentCallback)
 
 		// Universal secure verification routes
 		apiRouter.GET("/verify/methods", middleware.UserAuth(), middleware.DisableCache(), controller.GetVerificationMethods)
@@ -224,6 +226,7 @@ func SetApiRouter(router *gin.Engine) {
 			productAdminRoute.DELETE("/products/:id", controller.AdminDeleteProduct)
 			productAdminRoute.GET("/orders", controller.AdminListProductOrders)
 			productAdminRoute.PUT("/orders/:id", controller.AdminUpdateProductOrder)
+			productAdminRoute.POST("/orders/:id/pay", middleware.CriticalRateLimit(), controller.AdminExecuteProductOrderPayment)
 		}
 
 		// Subscription payment callbacks (no auth)

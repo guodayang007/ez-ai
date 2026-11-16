@@ -155,6 +155,7 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"DELETE /api/product/admin/products/:id": accessTokenScopeRule("billing:write"),
 	"GET /api/product/admin/orders":          accessTokenScopeRule("billing:read"),
 	"PUT /api/product/admin/orders/:id":      accessTokenScopeRule("billing:write"),
+	"POST /api/product/admin/orders/:id/pay": accessTokenScopeRule("billing:write"),
 
 	// router/api-router.go: /api/option
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),

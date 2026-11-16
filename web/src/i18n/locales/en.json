@@ -7927,6 +7927,22 @@
     "Current status": "Current status",
     "New status": "New status",
     "Execute payment": "Execute payment",
-    "Payment execution is not available yet": "Payment execution is not available yet"
+    "Paying": "Paying",
+    "Paid automatically": "Paid automatically",
+    "Payment failed": "Payment failed",
+    "Fulfillment plan": "Fulfillment plan",
+    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "Use letters, digits, dots, dashes and underscores (max 64 characters)",
+    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually",
+    "Automatic payment": "Automatic payment",
+    "Automatic payment result": "Automatic payment result",
+    "Payment started. The order completes automatically once DogPay pays": "Payment started. The order completes automatically once DogPay pays",
+    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately",
+    "Pay with DogPay": "Pay with DogPay",
+    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)",
+    "Automatic fulfillment is not configured": "Automatic fulfillment is not configured",
+    "This specification has no fulfillment plan, deliver it manually": "This specification has no fulfillment plan, deliver it manually",
+    "Only paid orders, or orders whose automatic payment failed, can be paid": "Only paid orders, or orders whose automatic payment failed, can be paid",
+    "This order has no ChatGPT session": "This order has no ChatGPT session",
+    "The fulfillment service did not accept the order": "The fulfillment service did not accept the order"
   }
 }

@@ -211,6 +211,28 @@ export function SkuEditor(props: SkuEditorProps) {
               </FormItem>
             )}
           />
+          <FormField
+            control={props.control}
+            name={`${prefix}.fulfillment_plan`}
+            render={({ field }) => (
+              <FormItem className='sm:col-span-2 lg:col-span-4'>
+                <FormLabel>{t('Fulfillment plan')}</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    className='font-mono'
+                    placeholder='chatgptplusplan'
+                  />
+                </FormControl>
+                <FormDescription className='text-xs'>
+                  {t(
+                    'Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually'
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
         </div>
       </div>
     </div>

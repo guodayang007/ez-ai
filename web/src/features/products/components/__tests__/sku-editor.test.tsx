@@ -60,6 +60,18 @@ describe('sku editor', () => {
     expect(screen.getByText('Specification 1')).toBeInTheDocument()
   })
 
+  test('fulfillment plan field shows the saved plan code', () => {
+    render(
+      <Harness
+        sku={{ ...createEmptySku(), fulfillment_plan: 'chatgptplusplan' }}
+      />
+    )
+
+    expect(screen.getByLabelText('Fulfillment plan')).toHaveValue(
+      'chatgptplusplan'
+    )
+  })
+
   test('specification card does not offer per-specification order fields', () => {
     render(<Harness sku={createEmptySku()} />)
 

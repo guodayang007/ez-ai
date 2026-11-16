@@ -3,7 +3,9 @@ package controller
 import (
 	"encoding/base64"
 	"errors"
+	"io"
 	"math"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -27,9 +30,10 @@ const (
 )
 
 var (
-	productInputKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	productCurrencyPattern = regexp.MustCompile(`^[A-Z]{3,8}$`)
-	productInputTypes      = map[string]bool{
+	productInputKeyPattern        = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	productFulfillmentPlanPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{0,64}$`)
+	productCurrencyPattern        = regexp.MustCompile(`^[A-Z]{3,8}$`)
+	productInputTypes             = map[string]bool{
 		model.ProductInputText:           true,
 		model.ProductInputTextarea:       true,
 		model.ProductInputSecret:         true,
@@ -83,6 +87,10 @@ func normalizeProduct(product *model.Product) (string, map[string]any) {
 		sku.Tag = strings.TrimSpace(sku.Tag)
 		if utf8.RuneCountInString(sku.Tag) > 32 {
 			return "Tag cannot exceed 32 characters", nil
+		}
+		sku.FulfillmentPlan = strings.TrimSpace(sku.FulfillmentPlan)
+		if !productFulfillmentPlanPattern.MatchString(sku.FulfillmentPlan) {
+			return "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)", nil
 		}
 		sku.Currency = strings.ToUpper(strings.TrimSpace(sku.Currency))
 		if sku.Currency == "" {
@@ -258,22 +266,23 @@ func CreateProductOrder(c *gin.Context) {
 		return
 	}
 	order := &model.ProductOrder{
-		UserId:       userId,
-		ProductId:    product.Id,
-		SkuId:        sku.Id,
-		ProductTitle: product.Title,
-		SkuName:      sku.Name,
-		PriceAmount:  sku.PriceAmount,
-		Currency:     sku.Currency,
-		InputFields:  product.InputFields,
-		Inputs:       inputs,
-		Remark:       req.Remark,
+		UserId:          userId,
+		ProductId:       product.Id,
+		SkuId:           sku.Id,
+		ProductTitle:    product.Title,
+		SkuName:         sku.Name,
+		PriceAmount:     sku.PriceAmount,
+		Currency:        sku.Currency,
+		InputFields:     product.InputFields,
+		FulfillmentPlan: sku.FulfillmentPlan,
+		Inputs:          inputs,
+		Remark:          req.Remark,
 	}
 	if err := model.CreateProductOrder(order); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	order.MaskSecretInputs()
+	order.RedactForBuyer()
 	common.ApiSuccess(c, order)
 }
 
@@ -289,7 +298,7 @@ func GetSelfProductOrders(c *gin.Context) {
 		return
 	}
 	for i := range orders {
-		orders[i].MaskSecretInputs()
+		orders[i].RedactForBuyer()
 	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(orders)
@@ -515,4 +524,138 @@ func AdminUpdateProductOrder(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, updated)
+}
+
+// AdminExecuteProductOrderPayment starts the automatic purchase of a paid
+// order: the fulfiller service pays for the SKU's plan with the DogPay card on
+// the buyer's ChatGPT account and reports back through
+// ProductFulfillmentCallback.
+func AdminExecuteProductOrderPayment(c *gin.Context) {
+	id, ok := productIdParam(c)
+	if !ok {
+		return
+	}
+	config := service.GetProductFulfillerConfig()
+	if !config.Enabled() {
+		common.ApiErrorT(c, "Automatic fulfillment is not configured")
+		return
+	}
+	order, err := model.GetProductOrder(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		common.ApiErrorT(c, "Order not found")
+		return
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if order.FulfillmentPlan == "" {
+		common.ApiErrorT(c, "This specification has no fulfillment plan, deliver it manually")
+		return
+	}
+	if !model.CanStartProductFulfillment(order) {
+		common.ApiErrorT(c, "Only paid orders, or orders whose automatic payment failed, can be paid")
+		return
+	}
+	accessToken := order.ChatGPTAccessToken()
+	if accessToken == "" {
+		common.ApiErrorT(c, "This order has no ChatGPT session")
+		return
+	}
+	for _, field := range order.InputFields {
+		if field.Type != model.ProductInputChatGPTSession {
+			continue
+		}
+		if msg := validateChatGPTSession(order.Inputs[field.Key], time.Now()); msg != "" {
+			common.ApiErrorT(c, msg)
+			return
+		}
+	}
+
+	if err := model.StartProductOrderFulfillment(id, order.Status, order.FulfillmentStatus); err != nil {
+		if errors.Is(err, model.ErrProductOrderStatusConflict) {
+			common.ApiErrorT(c, "Order status has changed, please refresh")
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	submitErr := service.SubmitProductFulfillment(config, service.ProductFulfillmentJob{
+		TradeNo:     order.TradeNo,
+		Plan:        order.FulfillmentPlan,
+		AccessToken: accessToken,
+	})
+	if submitErr != nil {
+		common.SysError(common.LogText("failed to submit product order %s to fulfiller: %s", order.TradeNo, submitErr.Error()))
+		if err := model.FinishProductOrderFulfillment(order.TradeNo, false, submitErr.Error(), ""); err != nil {
+			common.SysError(common.LogText("failed to record fulfiller failure of product order %s: %s", order.TradeNo, err.Error()))
+		}
+		common.ApiErrorT(c, "The fulfillment service did not accept the order")
+		return
+	}
+
+	updated, err := model.GetProductOrder(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, updated)
+}
+
+type productFulfillmentCallbackRequest struct {
+	TradeNo      string `json:"trade_no"`
+	Success      bool   `json:"success"`
+	Message      string `json:"message"`
+	DeliveryNote string `json:"delivery_note"`
+}
+
+// ProductFulfillmentCallback receives the fulfiller's result. It is signed
+// with the shared secret instead of a user session.
+func ProductFulfillmentCallback(c *gin.Context) {
+	config := service.GetProductFulfillerConfig()
+	if !config.Enabled() {
+		c.JSON(http.StatusNotFound, gin.H{"success": false})
+		return
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false})
+		return
+	}
+	if !service.VerifyProductFulfillerSignature(config.Secret,
+		c.GetHeader(service.ProductFulfillerTimestampHeader),
+		c.GetHeader(service.ProductFulfillerSignatureHeader),
+		body, time.Now()) {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false})
+		return
+	}
+	var req productFulfillmentCallbackRequest
+	if err := common.Unmarshal(body, &req); err != nil || req.TradeNo == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false})
+		return
+	}
+	message := truncateRunes(strings.TrimSpace(req.Message), 2000)
+	deliveryNote := truncateRunes(strings.TrimSpace(req.DeliveryNote), 5000)
+	err = model.FinishProductOrderFulfillment(req.TradeNo, req.Success, message, deliveryNote)
+	if errors.Is(err, model.ErrProductOrderStatusConflict) {
+		// Replayed callback, or an admin changed the order meanwhile. The
+		// fulfiller must not retry, so this is acknowledged.
+		common.SysLog(common.LogText("ignored fulfiller result for product order %s: order is no longer running", req.TradeNo))
+		c.JSON(http.StatusOK, gin.H{"success": true, "ignored": true})
+		return
+	}
+	if err != nil {
+		common.SysError(common.LogText("failed to record fulfiller result of product order %s: %s", req.TradeNo, err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func truncateRunes(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max])
 }

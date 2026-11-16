@@ -7927,6 +7927,22 @@
     "Current status": "Текущий статус",
     "New status": "Новый статус",
     "Execute payment": "Выполнить оплату",
-    "Payment execution is not available yet": "Выполнение оплаты пока недоступно"
+    "Paying": "Оплачивается",
+    "Paid automatically": "Оплачено автоматически",
+    "Payment failed": "Ошибка оплаты",
+    "Fulfillment plan": "Код тарифа",
+    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "Только буквы, цифры, точки, дефисы и подчёркивания (не более 64 символов)",
+    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "Код тарифа, который «Выполнить оплату» покупает через DogPay. Он должен быть в ALLOWED_PLANS сервиса активации. Оставьте пустым для ручной выдачи",
+    "Automatic payment": "Автоматическая оплата",
+    "Automatic payment result": "Результат автоматической оплаты",
+    "Payment started. The order completes automatically once DogPay pays": "Оплата запущена. Заказ завершится автоматически после оплаты через DogPay",
+    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "Купить {{plan}} картой DogPay для заказа {{tradeNo}} ({{product}}, покупатель оплатил {{price}})? Списание с карты произойдёт сразу",
+    "Pay with DogPay": "Оплатить через DogPay",
+    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "Код тарифа может содержать только буквы, цифры, точки, дефисы и подчёркивания (не более 64)",
+    "Automatic fulfillment is not configured": "Сервис автоматической активации не настроен",
+    "This specification has no fulfillment plan, deliver it manually": "У этой спецификации нет кода тарифа, выдайте её вручную",
+    "Only paid orders, or orders whose automatic payment failed, can be paid": "Оплатить можно только оплаченные заказы или заказы с неудачной автоматической оплатой",
+    "This order has no ChatGPT session": "В заказе нет сессии ChatGPT",
+    "The fulfillment service did not accept the order": "Сервис активации не принял заказ"
   }
 }

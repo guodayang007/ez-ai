@@ -24,6 +24,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampToDate } from '@/lib/format'
 
 import {
+  PRODUCT_FULFILLMENT_STATUSES,
   PRODUCT_MASKED_INPUT_TYPES,
   PRODUCT_ORDER_STATUSES,
 } from '../constants'
@@ -69,6 +70,27 @@ export function OrderDetails(props: OrderDetailsProps) {
     rows.splice(1, 0, {
       label: t('User'),
       value: `${order.username || '-'} (ID ${order.user_id})`,
+    })
+  }
+  if (order.fulfillment_plan) {
+    rows.push({
+      label: t('Fulfillment plan'),
+      value: <span className='font-mono'>{order.fulfillment_plan}</span>,
+    })
+  }
+  const fulfillment = order.fulfillment_status
+    ? PRODUCT_FULFILLMENT_STATUSES[order.fulfillment_status]
+    : undefined
+  if (fulfillment) {
+    rows.push({
+      label: t('Automatic payment'),
+      value: (
+        <StatusBadge
+          label={t(fulfillment.labelKey)}
+          variant={fulfillment.variant}
+          copyable={false}
+        />
+      ),
     })
   }
   if (order.completed_at > 0) {
@@ -122,6 +144,16 @@ export function OrderDetails(props: OrderDetailsProps) {
         <section className='space-y-1'>
           <h4 className='text-sm font-semibold'>{t('Buyer remark')}</h4>
           <p className='text-sm whitespace-pre-wrap'>{order.remark}</p>
+        </section>
+      )}
+      {order.fulfillment_message && (
+        <section className='space-y-1'>
+          <h4 className='text-sm font-semibold'>
+            {t('Automatic payment result')}
+          </h4>
+          <p className='text-sm break-all whitespace-pre-wrap'>
+            {order.fulfillment_message}
+          </p>
         </section>
       )}
       {order.delivery_note && (

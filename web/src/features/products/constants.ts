@@ -18,7 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { StatusBadgeProps } from '@/components/status-badge'
 
-import type { ProductInputType, ProductOrderStatus } from './types'
+import type {
+  ProductFulfillmentStatus,
+  ProductInputType,
+  ProductOrderStatus,
+} from './types'
 
 export const PRODUCT_QUERY_KEYS = {
   adminProducts: ['admin-products'] as const,
@@ -54,6 +58,15 @@ export const PRODUCT_ORDER_STATUSES: Record<
   completed: { labelKey: 'Completed', variant: 'success' },
   cancelled: { labelKey: 'Cancelled', variant: 'neutral' },
   refunded: { labelKey: 'Refunded', variant: 'danger' },
+}
+
+export const PRODUCT_FULFILLMENT_STATUSES: Record<
+  ProductFulfillmentStatus,
+  Pick<StatusBadgeProps, 'variant'> & { labelKey: string }
+> = {
+  running: { labelKey: 'Paying', variant: 'blue' },
+  succeeded: { labelKey: 'Paid automatically', variant: 'success' },
+  failed: { labelKey: 'Payment failed', variant: 'danger' },
 }
 
 export const PRODUCT_ORDER_STATUS_VALUES = Object.keys(

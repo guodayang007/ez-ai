@@ -42,6 +42,8 @@ export type ProductSku = {
   original_price: number
   currency: string
   tag: string
+  /** Upstream plan code bought automatically; empty means manual delivery. */
+  fulfillment_plan: string
   enabled: boolean
   sort_order: number
 }
@@ -68,6 +70,8 @@ export type ProductOrderStatus =
   | 'cancelled'
   | 'refunded'
 
+export type ProductFulfillmentStatus = 'running' | 'succeeded' | 'failed'
+
 export type ProductOrder = {
   id: number
   user_id: number
@@ -87,6 +91,11 @@ export type ProductOrder = {
   created_at: number
   updated_at: number
   completed_at: number
+  // Admin-only automatic fulfillment details; omitted for buyers.
+  fulfillment_plan?: string
+  fulfillment_status?: ProductFulfillmentStatus
+  fulfillment_message?: string
+  fulfillment_started_at?: number
 }
 
 export type ApiResponse<T = unknown> = {

@@ -3,14 +3,17 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -200,4 +203,153 @@ func TestNormalizeProductRejectsOriginalPriceBelowPrice(t *testing.T) {
 	product := &model.Product{Title: "Plus", Skus: []model.ProductSku{{Name: "1 month", PriceAmount: 20, OriginalPrice: 10}}}
 	msg, _ := normalizeProduct(product)
 	assert.Equal(t, "Original price cannot be lower than the price", msg)
+}
+
+func TestProductOrderAutomaticFulfillment(t *testing.T) {
+	setupProductTestDB(t)
+	const secret = "0123456789abcdef0123456789abcdef"
+	const token = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJl"
+	var received []service.ProductFulfillmentJob
+	rejectJobs := false
+	fulfiller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.True(t, service.VerifyProductFulfillerSignature(secret,
+			r.Header.Get(service.ProductFulfillerTimestampHeader),
+			r.Header.Get(service.ProductFulfillerSignatureHeader), body, time.Now()),
+			"jobs sent to the fulfiller are signed")
+		var job service.ProductFulfillmentJob
+		require.NoError(t, common.Unmarshal(body, &job))
+		received = append(received, job)
+		if rejectJobs {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer fulfiller.Close()
+	t.Setenv("PRODUCT_FULFILLER_URL", fulfiller.URL)
+	t.Setenv("PRODUCT_FULFILLER_SECRET", secret)
+	t.Setenv("PRODUCT_FULFILLER_CALLBACK_URL", "https://ez-ai.test/api/product/fulfillment/callback")
+
+	product := &model.Product{
+		Title:       "ChatGPT",
+		Enabled:     true,
+		InputFields: []model.ProductInputField{{Key: "session", Label: "Session", Type: model.ProductInputChatGPTSession, Required: true}},
+		Skus: []model.ProductSku{
+			{Name: "Plus", PriceAmount: 42.99, Currency: "USD", Enabled: true, FulfillmentPlan: " chatgptplusplan "},
+			{Name: "Manual", PriceAmount: 10, Currency: "USD", Enabled: true},
+		},
+	}
+	msg, _ := normalizeProduct(product)
+	require.Empty(t, msg)
+	require.NoError(t, model.SaveProduct(product))
+	session := `{"accessToken":"` + token + `"}`
+	placeOrder := func(skuId int) model.ProductOrder {
+		inputs, err := common.Marshal(map[string]string{"session": session})
+		require.NoError(t, err)
+		resp := callProductHandler(t, CreateProductOrder, 7, 0, `{"sku_id":`+strconv.Itoa(skuId)+`,"inputs":`+string(inputs)+`}`)
+		require.True(t, resp.Success, resp.Message)
+		var order model.ProductOrder
+		require.NoError(t, common.Unmarshal(resp.Data, &order))
+		assert.Empty(t, order.FulfillmentPlan, "buyers do not see the fulfillment plan")
+		return order
+	}
+	callback := func(payload string, sign bool) int {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(payload))
+		timestamp := time.Now().Unix()
+		c.Request.Header.Set(service.ProductFulfillerTimestampHeader, strconv.FormatInt(timestamp, 10))
+		signature := service.SignProductFulfillerPayload(secret, timestamp, []byte(payload))
+		if !sign {
+			signature = service.SignProductFulfillerPayload("wrong-secret", timestamp, []byte(payload))
+		}
+		c.Request.Header.Set(service.ProductFulfillerSignatureHeader, signature)
+		ProductFulfillmentCallback(c)
+		return recorder.Code
+	}
+
+	manual := placeOrder(product.Skus[1].Id)
+	require.True(t, callProductHandler(t, AdminUpdateProductOrder, 1, manual.Id, `{"status":"paid"}`).Success)
+	noPlan := callProductHandler(t, AdminExecuteProductOrderPayment, 1, manual.Id, "")
+	assert.Equal(t, "This specification has no fulfillment plan, deliver it manually", noPlan.Message)
+
+	order := placeOrder(product.Skus[0].Id)
+	unpaid := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	assert.False(t, unpaid.Success, "a pending order is not paid for until the buyer has paid")
+	require.True(t, callProductHandler(t, AdminUpdateProductOrder, 1, order.Id, `{"status":"paid"}`).Success)
+
+	// The fulfiller is down: the attempt is recorded as failed and can be retried.
+	rejectJobs = true
+	down := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	assert.Equal(t, "The fulfillment service did not accept the order", down.Message)
+	stored, err := model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductOrderProcessing, stored.Status)
+	assert.Equal(t, model.ProductFulfillmentFailed, stored.FulfillmentStatus)
+	assert.Contains(t, stored.FulfillmentMessage, "HTTP 503")
+
+	rejectJobs = false
+	started := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	require.True(t, started.Success, started.Message)
+	require.Len(t, received, 2)
+	assert.Equal(t, service.ProductFulfillmentJob{
+		TradeNo:     order.TradeNo,
+		Plan:        "chatgptplusplan",
+		AccessToken: token,
+		CallbackURL: "https://ez-ai.test/api/product/fulfillment/callback",
+	}, received[1])
+
+	again := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, "")
+	assert.False(t, again.Success, "a running purchase cannot be started twice")
+	require.Len(t, received, 2, "the card is not charged a second time")
+
+	success := `{"trade_no":"` + order.TradeNo + `","success":true,"delivery_note":"ChatGPT Plus activated"}`
+	assert.Equal(t, http.StatusUnauthorized, callback(success, false), "unsigned results are rejected")
+	stored, err = model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductFulfillmentRunning, stored.FulfillmentStatus)
+
+	assert.Equal(t, http.StatusOK, callback(success, true))
+	stored, err = model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductOrderCompleted, stored.Status)
+	assert.Equal(t, model.ProductFulfillmentSucceeded, stored.FulfillmentStatus)
+	assert.Equal(t, "ChatGPT Plus activated", stored.DeliveryNote)
+	assert.Positive(t, stored.CompletedAt)
+
+	failedReplay := `{"trade_no":"` + order.TradeNo + `","success":false,"message":"card declined"}`
+	assert.Equal(t, http.StatusOK, callback(failedReplay, true), "late results are acknowledged so the fulfiller stops retrying")
+	stored, err = model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductFulfillmentSucceeded, stored.FulfillmentStatus, "a late result does not overwrite a finished purchase")
+}
+
+func TestVerifyProductFulfillerSignature(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	now := time.Unix(1_800_000_000, 0)
+	body := []byte(`{"trade_no":"PO1"}`)
+	signature := service.SignProductFulfillerPayload(secret, now.Unix(), body)
+	// Same vector as services/dogpay-fulfiller/test/app.test.mjs.
+	require.Equal(t, "4b15c0aca50b26446c081d40c59fed570b2fc8641345102bd26210eb6577b459", signature)
+	tests := []struct {
+		name      string
+		timestamp int64
+		signature string
+		body      []byte
+		want      bool
+	}{
+		{name: "valid", timestamp: now.Unix(), signature: signature, body: body, want: true},
+		{name: "uppercase hex", timestamp: now.Unix(), signature: strings.ToUpper(signature), body: body, want: true},
+		{name: "tampered body", timestamp: now.Unix(), signature: signature, body: []byte(`{"trade_no":"PO2"}`)},
+		{name: "stale timestamp", timestamp: now.Add(-6 * time.Minute).Unix(), signature: service.SignProductFulfillerPayload(secret, now.Add(-6*time.Minute).Unix(), body), body: body},
+		{name: "empty signature", timestamp: now.Unix(), body: body},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := service.VerifyProductFulfillerSignature(secret, strconv.FormatInt(tt.timestamp, 10), tt.signature, tt.body, now)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

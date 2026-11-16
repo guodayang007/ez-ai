@@ -115,7 +115,33 @@ DEFAULT_USER_PASSWORD=12345678
 - 当前未配置 Redis（`REDIS_CONN_STRING`），使用内存缓存。
 - `APP_ENV=dev` 会默认关闭 API、页面、关键接口（登录、续期、退出登录等）和搜索限流，避免本地频繁刷新时登录返回 429；单独设置 `CRITICAL_RATE_LIMIT_ENABLE=true` 等可以重新打开某一项。生产环境不要设置。
 
-## 6. 重置数据库
+## 6. 商品订单自动开通（DogPay）
+
+后台“商品订单”页的“执行支付”按钮会把订单交给独立服务 `services/dogpay-fulfiller`：它用买家提交的 ChatGPT Session 打开结账页，用 DogPay 虚拟卡付款，再回调 ez-ai 把订单置为已完成（失败则保留“处理中”并记录原因，可重试）。
+
+```bash
+cd services/dogpay-fulfiller
+bun install
+bunx playwright install chromium     # 首次需要下载浏览器
+cp .env.example .env                 # 填写卡信息、FULFILLER_SECRET、ALLOWED_PLANS
+node src/server.mjs                  # 默认监听 127.0.0.1:3100
+npm test                             # 服务自身的单元测试
+```
+
+ez-ai 的 `.env` 里加上：
+
+```
+PRODUCT_FULFILLER_URL=http://127.0.0.1:3100
+PRODUCT_FULFILLER_SECRET=<与开通服务相同，至少 32 位>
+```
+
+使用条件：
+
+- 规格（SKU）要在商品编辑里填“开通套餐代码”，并且该代码在开通服务的 `ALLOWED_PLANS` 中；留空的规格只能人工交付。
+- 只有“已支付”的订单，或自动支付失败的订单可以执行支付。
+- 开通前会检查账号是否已有订阅，已有则不扣款；遇到验证码或 3-D Secure 时停止，需要人工完成。
+
+## 7. 重置数据库
 
 清空所有数据，回到全新状态（重启后端后会按 `.env` 重新创建 root 和 user）：
 

@@ -7927,6 +7927,22 @@
     "Current status": "Statut actuel",
     "New status": "Nouveau statut",
     "Execute payment": "Exécuter le paiement",
-    "Payment execution is not available yet": "L'exécution du paiement n'est pas encore disponible"
+    "Paying": "Paiement en cours",
+    "Paid automatically": "Payé automatiquement",
+    "Payment failed": "Échec du paiement",
+    "Fulfillment plan": "Plan à activer",
+    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "Lettres, chiffres, points, tirets et traits de soulignement uniquement (64 caractères max.)",
+    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "Code du plan acheté avec DogPay par « Exécuter le paiement ». Il doit figurer dans ALLOWED_PLANS du service d'activation. Laissez vide pour une livraison manuelle",
+    "Automatic payment": "Paiement automatique",
+    "Automatic payment result": "Résultat du paiement automatique",
+    "Payment started. The order completes automatically once DogPay pays": "Paiement lancé. La commande se terminera automatiquement une fois le paiement DogPay effectué",
+    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "Acheter {{plan}} avec la carte DogPay pour la commande {{tradeNo}} ({{product}}, payée {{price}} par l'acheteur) ? La carte est débitée immédiatement",
+    "Pay with DogPay": "Payer avec DogPay",
+    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "Le plan à activer ne peut contenir que des lettres, chiffres, points, tirets et traits de soulignement (64 max.)",
+    "Automatic fulfillment is not configured": "Le service d'activation automatique n'est pas configuré",
+    "This specification has no fulfillment plan, deliver it manually": "Cette spécification n'a pas de plan à activer, livrez-la manuellement",
+    "Only paid orders, or orders whose automatic payment failed, can be paid": "Seules les commandes payées, ou dont le paiement automatique a échoué, peuvent être payées",
+    "This order has no ChatGPT session": "Cette commande n'a pas de session ChatGPT",
+    "The fulfillment service did not accept the order": "Le service d'activation n'a pas accepté la commande"
   }
 }

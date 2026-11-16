@@ -106,6 +106,14 @@ export async function getAdminProductOrders(
   return res.data
 }
 
+/** Asks the fulfiller service to buy the order's plan with the DogPay card. */
+export async function executeProductOrderPayment(
+  id: number
+): Promise<ApiResponse<ProductOrder>> {
+  const res = await api.post(`/api/product/admin/orders/${id}/pay`)
+  return res.data
+}
+
 export async function updateProductOrder(
   id: number,
   payload: { status?: string; delivery_note?: string }

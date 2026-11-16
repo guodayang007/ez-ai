@@ -7927,6 +7927,22 @@
     "Current status": "目前狀態",
     "New status": "新狀態",
     "Execute payment": "執行支付",
-    "Payment execution is not available yet": "執行支付功能暫未開放"
+    "Paying": "支付中",
+    "Paid automatically": "已自動支付",
+    "Payment failed": "支付失敗",
+    "Fulfillment plan": "開通方案代碼",
+    "Use letters, digits, dots, dashes and underscores (max 64 characters)": "僅可使用字母、數字、點、短橫線和底線（最多 64 個字元）",
+    "Plan code that Execute payment buys with DogPay. It must be listed in the fulfiller ALLOWED_PLANS. Leave empty to deliver manually": "「執行支付」時用 DogPay 購買的方案代碼，必須在開通服務的 ALLOWED_PLANS 中。留空表示人工交付",
+    "Automatic payment": "自動支付",
+    "Automatic payment result": "自動支付結果",
+    "Payment started. The order completes automatically once DogPay pays": "已開始支付，DogPay 付款成功後訂單會自動完成",
+    "Buy {{plan}} with the DogPay card for order {{tradeNo}} ({{product}}, buyer paid {{price}})? The card is charged immediately": "確認用 DogPay 卡為訂單 {{tradeNo}}（{{product}}，買家已付 {{price}}）購買 {{plan}}？將立即從卡上扣款",
+    "Pay with DogPay": "用 DogPay 支付",
+    "Fulfillment plan may only contain letters, digits, dots, dashes and underscores (max 64)": "開通方案代碼只能包含字母、數字、點、短橫線和底線（最多 64 個字元）",
+    "Automatic fulfillment is not configured": "未設定自動開通服務",
+    "This specification has no fulfillment plan, deliver it manually": "該規格未設定開通方案代碼，請人工交付",
+    "Only paid orders, or orders whose automatic payment failed, can be paid": "只有已支付的訂單，或自動支付失敗的訂單才能執行支付",
+    "This order has no ChatGPT session": "該訂單沒有 ChatGPT Session",
+    "The fulfillment service did not accept the order": "開通服務未接受該訂單"
   }
 }

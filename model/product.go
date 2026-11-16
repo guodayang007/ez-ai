@@ -39,6 +39,15 @@ var productOrderTransitions = map[string][]string{
 	ProductOrderProcessing: {ProductOrderCompleted, ProductOrderRefunded},
 }
 
+// Automatic fulfillment states. An admin starts fulfillment with "Execute
+// payment"; the fulfiller service buys the SKU's plan with the DogPay card and
+// reports the result through a signed callback.
+const (
+	ProductFulfillmentRunning   = "running"
+	ProductFulfillmentSucceeded = "succeeded"
+	ProductFulfillmentFailed    = "failed"
+)
+
 var ErrProductOrderStatusConflict = errors.New("product order status changed")
 
 type Product struct {
@@ -81,11 +90,14 @@ type ProductSku struct {
 	OriginalPrice float64 `json:"original_price"`
 	Currency      string  `json:"currency" gorm:"type:varchar(8)"`
 	// Tag is a short badge shown next to the price, such as a delivery note.
-	Tag       string `json:"tag" gorm:"type:varchar(64)"`
-	Enabled   bool   `json:"enabled"`
-	SortOrder int    `json:"sort_order"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	Tag string `json:"tag" gorm:"type:varchar(64)"`
+	// FulfillmentPlan is the upstream plan code the fulfiller service buys
+	// for this SKU, such as a ChatGPT plan name. Empty means manual delivery.
+	FulfillmentPlan string `json:"fulfillment_plan" gorm:"type:varchar(64)"`
+	Enabled         bool   `json:"enabled"`
+	SortOrder       int    `json:"sort_order"`
+	CreatedAt       int64  `json:"created_at"`
+	UpdatedAt       int64  `json:"updated_at"`
 }
 
 type ProductOrder struct {
@@ -113,6 +125,13 @@ type ProductOrder struct {
 	CreatedAt    int64  `json:"created_at" gorm:"index"`
 	UpdatedAt    int64  `json:"updated_at"`
 	CompletedAt  int64  `json:"completed_at"`
+
+	// Automatic fulfillment. FulfillmentPlan is snapshotted from the SKU at
+	// order time; the other fields are admin-only and cleared by RedactForBuyer.
+	FulfillmentPlan      string `json:"fulfillment_plan,omitempty" gorm:"type:varchar(64)"`
+	FulfillmentStatus    string `json:"fulfillment_status,omitempty" gorm:"type:varchar(16)"`
+	FulfillmentMessage   string `json:"fulfillment_message,omitempty" gorm:"type:text"`
+	FulfillmentStartedAt int64  `json:"fulfillment_started_at,omitempty"`
 
 	InputFields []ProductInputField `json:"input_fields" gorm:"-"`
 	Inputs      map[string]string   `json:"inputs" gorm:"-"`
@@ -156,9 +175,13 @@ func (o *ProductOrder) decodeJSONColumns() error {
 	return nil
 }
 
-// MaskSecretInputs hides secret values, including ChatGPT sessions, before an
-// order is shown to its buyer.
-func (o *ProductOrder) MaskSecretInputs() {
+// RedactForBuyer hides secret values, including ChatGPT sessions, and the
+// admin-only fulfillment details before an order is shown to its buyer.
+func (o *ProductOrder) RedactForBuyer() {
+	o.FulfillmentPlan = ""
+	o.FulfillmentStatus = ""
+	o.FulfillmentMessage = ""
+	o.FulfillmentStartedAt = 0
 	for _, field := range o.InputFields {
 		if field.Type != ProductInputSecret && field.Type != ProductInputChatGPTSession {
 			continue
@@ -304,14 +327,15 @@ func SaveProduct(product *Product) error {
 			if sku.Id != 0 && existingIds[sku.Id] {
 				keptIds[sku.Id] = true
 				if err := tx.Model(&ProductSku{}).Where("id = ?", sku.Id).Updates(map[string]any{
-					"name":           sku.Name,
-					"price_amount":   sku.PriceAmount,
-					"original_price": sku.OriginalPrice,
-					"currency":       sku.Currency,
-					"tag":            sku.Tag,
-					"enabled":        sku.Enabled,
-					"sort_order":     sku.SortOrder,
-					"updated_at":     now,
+					"name":             sku.Name,
+					"price_amount":     sku.PriceAmount,
+					"original_price":   sku.OriginalPrice,
+					"currency":         sku.Currency,
+					"tag":              sku.Tag,
+					"fulfillment_plan": sku.FulfillmentPlan,
+					"enabled":          sku.Enabled,
+					"sort_order":       sku.SortOrder,
+					"updated_at":       now,
 				}).Error; err != nil {
 					return err
 				}
@@ -506,4 +530,97 @@ func UpdateProductOrderDeliveryNote(id int, deliveryNote string) error {
 		"delivery_note": deliveryNote,
 		"updated_at":    common.GetTimestamp(),
 	}).Error
+}
+
+// ChatGPTAccessToken returns the access token from the order's ChatGPT session
+// input, or "" when the order has none.
+func (o *ProductOrder) ChatGPTAccessToken() string {
+	for _, field := range o.InputFields {
+		if field.Type != ProductInputChatGPTSession {
+			continue
+		}
+		var session struct {
+			AccessToken string `json:"accessToken"`
+		}
+		if common.UnmarshalJsonStr(o.Inputs[field.Key], &session) == nil && session.AccessToken != "" {
+			return session.AccessToken
+		}
+	}
+	return ""
+}
+
+// CanStartProductFulfillment reports whether "Execute payment" may run: the
+// buyer has paid, or an earlier automatic attempt failed while processing.
+func CanStartProductFulfillment(order *ProductOrder) bool {
+	if order.FulfillmentPlan == "" {
+		return false
+	}
+	switch order.Status {
+	case ProductOrderPaid:
+		return order.FulfillmentStatus == "" || order.FulfillmentStatus == ProductFulfillmentFailed
+	case ProductOrderProcessing:
+		return order.FulfillmentStatus == ProductFulfillmentFailed
+	}
+	return false
+}
+
+// StartProductOrderFulfillment moves the order to processing and marks the
+// automatic purchase as running. It only applies while the order still has
+// the status and fulfillment state the admin saw, so one card charge is
+// started per click even when two admins act at once.
+func StartProductOrderFulfillment(id int, fromStatus, fromFulfillment string) error {
+	now := common.GetTimestamp()
+	query := DB.Model(&ProductOrder{}).Where("id = ? AND status = ?", id, fromStatus)
+	if fromFulfillment == "" {
+		// Orders created before the column existed hold NULL here.
+		query = query.Where("(fulfillment_status = ? OR fulfillment_status IS NULL)", "")
+	} else {
+		query = query.Where("fulfillment_status = ?", fromFulfillment)
+	}
+	result := query.Updates(map[string]any{
+		"status":                 ProductOrderProcessing,
+		"fulfillment_status":     ProductFulfillmentRunning,
+		"fulfillment_message":    "",
+		"fulfillment_started_at": now,
+		"updated_at":             now,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrProductOrderStatusConflict
+	}
+	return nil
+}
+
+// FinishProductOrderFulfillment records the fulfiller's result for a running
+// purchase. Success completes the order; failure keeps it processing so an
+// admin can retry or refund. Results for an order that is no longer running
+// (a replayed callback, or an admin changed the status meanwhile) are
+// rejected with ErrProductOrderStatusConflict.
+func FinishProductOrderFulfillment(tradeNo string, succeeded bool, message string, deliveryNote string) error {
+	now := common.GetTimestamp()
+	updates := map[string]any{
+		"fulfillment_status":  ProductFulfillmentFailed,
+		"fulfillment_message": message,
+		"updated_at":          now,
+	}
+	if succeeded {
+		updates["fulfillment_status"] = ProductFulfillmentSucceeded
+		updates["status"] = ProductOrderCompleted
+		updates["completed_at"] = now
+		if deliveryNote != "" {
+			updates["delivery_note"] = deliveryNote
+		}
+	}
+	result := DB.Model(&ProductOrder{}).
+		Where("trade_no = ? AND status = ? AND fulfillment_status = ?", tradeNo, ProductOrderProcessing, ProductFulfillmentRunning).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrProductOrderStatusConflict
+	}
+	return nil
 }
