@@ -449,6 +449,9 @@ func migrateDB() error {
 		&CasbinRule{},
 		&AuthzRole{},
 		&UserAccessToken{},
+		&Product{},
+		&ProductSku{},
+		&ProductOrder{},
 	)
 	if err != nil {
 		return err
@@ -470,6 +473,9 @@ func migrateDB() error {
 		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
 			return err
 		}
+	}
+	if err := SeedDefaultProducts(); err != nil {
+		common.SysError(common.LogText("failed to seed default products: %s", err.Error()))
 	}
 	return nil
 }

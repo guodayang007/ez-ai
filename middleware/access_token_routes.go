@@ -143,6 +143,19 @@ var accessTokenRouteRules = map[string]accessTokenRouteRule{
 	"POST /api/subscription/admin/user_subscriptions/:id/invalidate": accessTokenScopeRule("billing:write"),
 	"DELETE /api/subscription/admin/user_subscriptions/:id":          accessTokenScopeRule("billing:write"),
 
+	// router/api-router.go: /api/product
+	"GET /api/product/":                      accessTokenAnyRule,
+	"POST /api/product/order":                accessTokenScopeRule("wallet:write"),
+	"GET /api/product/order/self":            accessTokenScopeRule("wallet:read"),
+	"POST /api/product/order/:id/cancel":     accessTokenScopeRule("wallet:write"),
+	"GET /api/product/admin/products":        accessTokenScopeRule("billing:read"),
+	"POST /api/product/admin/products":       accessTokenScopeRule("billing:write"),
+	"PUT /api/product/admin/products/:id":    accessTokenScopeRule("billing:write"),
+	"PATCH /api/product/admin/products/:id":  accessTokenScopeRule("billing:write"),
+	"DELETE /api/product/admin/products/:id": accessTokenScopeRule("billing:write"),
+	"GET /api/product/admin/orders":          accessTokenScopeRule("billing:read"),
+	"PUT /api/product/admin/orders/:id":      accessTokenScopeRule("billing:write"),
+
 	// router/api-router.go: /api/option
 	"GET /api/option/":                                           accessTokenScopeRule("option:read"),
 	"GET /api/option/request_policy":                             accessTokenScopeRule("option:read"),

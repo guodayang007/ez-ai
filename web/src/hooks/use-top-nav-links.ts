@@ -86,6 +86,11 @@ export function useTopNavLinks(): TopNavLink[] {
     links.push({ title: t('Rankings'), href: '/rankings', requiresAuth })
   }
 
+  // AI subscriptions storefront; browsing is public, ordering asks to sign in
+  if (modules?.subscribe !== false) {
+    links.push({ title: t('AI Subscriptions'), href: '/subscribe' })
+  }
+
   // Docs (supports external links)
   if (modules?.docs !== false) {
     if (docsLink) {

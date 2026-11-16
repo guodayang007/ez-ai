@@ -204,6 +204,28 @@ func SetApiRouter(router *gin.Engine) {
 			subscriptionAdminRoute.DELETE("/user_subscriptions/:id", controller.AdminDeleteUserSubscription)
 		}
 
+		// Products (storefront and manual-fulfillment orders)
+		// The catalog is public so guests can browse the subscription page.
+		apiRouter.GET("/product/", middleware.TryUserAuth(), controller.GetProducts)
+		productRoute := apiRouter.Group("/product")
+		productRoute.Use(middleware.UserAuth())
+		{
+			productRoute.POST("/order", middleware.CriticalRateLimit(), controller.CreateProductOrder)
+			productRoute.GET("/order/self", controller.GetSelfProductOrders)
+			productRoute.POST("/order/:id/cancel", controller.CancelSelfProductOrder)
+		}
+		productAdminRoute := apiRouter.Group("/product/admin")
+		productAdminRoute.Use(middleware.AdminAuth())
+		{
+			productAdminRoute.GET("/products", controller.AdminListProducts)
+			productAdminRoute.POST("/products", controller.AdminCreateProduct)
+			productAdminRoute.PUT("/products/:id", controller.AdminUpdateProduct)
+			productAdminRoute.PATCH("/products/:id", controller.AdminUpdateProductStatus)
+			productAdminRoute.DELETE("/products/:id", controller.AdminDeleteProduct)
+			productAdminRoute.GET("/orders", controller.AdminListProductOrders)
+			productAdminRoute.PUT("/orders/:id", controller.AdminUpdateProductOrder)
+		}
+
 		// Subscription payment callbacks (no auth)
 		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
