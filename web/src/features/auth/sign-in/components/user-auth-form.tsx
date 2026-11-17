@@ -139,10 +139,11 @@ export function UserAuthForm({
 
   const form = useForm<z.infer<typeof loginFormSchema>>({
     resolver: zodResolver(loginFormSchema),
-    defaultValues: {
-      username: '',
-      password: '',
-    },
+    // Local dev server only: prefill the root account from DEVELOPMENT.md.
+    // Production builds (web/dist) keep the fields empty.
+    defaultValues: import.meta.env.DEV
+      ? { username: 'root', password: '12345678' }
+      : { username: '', password: '' },
   })
 
   const wechatQrCodeUrl = useMemo(() => {
