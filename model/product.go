@@ -129,6 +129,9 @@ type ProductOrder struct {
 	FulfillmentStatus    string `json:"fulfillment_status,omitempty" gorm:"type:varchar(16)"`
 	FulfillmentMessage   string `json:"fulfillment_message,omitempty" gorm:"type:text"`
 	FulfillmentStartedAt int64  `json:"fulfillment_started_at,omitempty"`
+	// FulfillmentAttemptId is the ProductFulfillmentAttempt of the latest
+	// "Execute payment"; only its result may finish the order.
+	FulfillmentAttemptId int `json:"fulfillment_attempt_id,omitempty"`
 
 	InputFields []ProductInputField `json:"input_fields" gorm:"-"`
 	Inputs      map[string]string   `json:"inputs" gorm:"-"`
@@ -179,6 +182,7 @@ func (o *ProductOrder) RedactForBuyer() {
 	o.FulfillmentStatus = ""
 	o.FulfillmentMessage = ""
 	o.FulfillmentStartedAt = 0
+	o.FulfillmentAttemptId = 0
 	for _, field := range o.InputFields {
 		if field.Type != ProductInputSecret && field.Type != ProductInputChatGPTSession {
 			continue
@@ -545,23 +549,19 @@ func (o *ProductOrder) ChatGPTAccessToken() string {
 	return ""
 }
 
-// CanStartProductFulfillment reports whether "Execute payment" may run: the
-// buyer has paid, or an earlier automatic attempt failed while processing.
+// CanStartProductFulfillment reports whether "Execute payment" may run. The
+// order status is not checked; only a purchase that is still running blocks a
+// new one, so the card is not charged twice for the same order.
 func CanStartProductFulfillment(order *ProductOrder) bool {
-	switch order.Status {
-	case ProductOrderPaid:
-		return order.FulfillmentStatus == "" || order.FulfillmentStatus == ProductFulfillmentFailed
-	case ProductOrderProcessing:
-		return order.FulfillmentStatus == ProductFulfillmentFailed
-	}
-	return false
+	return order.FulfillmentStatus != ProductFulfillmentRunning
 }
 
 // StartProductOrderFulfillment moves the order to processing and marks the
-// automatic purchase of plan as running. It only applies while the order still has
-// the status and fulfillment state the admin saw, so one card charge is
-// started per click even when two admins act at once.
-func StartProductOrderFulfillment(id int, plan, fromStatus, fromFulfillment string) error {
+// automatic purchase of plan, recorded as attemptId, as running. It only
+// applies while the order still has the status and fulfillment state the
+// admin saw, so one card charge is started per click even when two admins
+// act at once.
+func StartProductOrderFulfillment(id int, plan string, attemptId int, fromStatus, fromFulfillment string) error {
 	now := common.GetTimestamp()
 	query := DB.Model(&ProductOrder{}).Where("id = ? AND status = ?", id, fromStatus)
 	if fromFulfillment == "" {
@@ -576,6 +576,7 @@ func StartProductOrderFulfillment(id int, plan, fromStatus, fromFulfillment stri
 		"fulfillment_status":     ProductFulfillmentRunning,
 		"fulfillment_message":    "",
 		"fulfillment_started_at": now,
+		"fulfillment_attempt_id": attemptId,
 		"updated_at":             now,
 	})
 	if result.Error != nil {
@@ -590,9 +591,11 @@ func StartProductOrderFulfillment(id int, plan, fromStatus, fromFulfillment stri
 // FinishProductOrderFulfillment records the fulfiller's result for a running
 // purchase. Success completes the order; failure keeps it processing so an
 // admin can retry or refund. Results for an order that is no longer running
-// (a replayed callback, or an admin changed the status meanwhile) are
-// rejected with ErrProductOrderStatusConflict.
-func FinishProductOrderFulfillment(tradeNo string, succeeded bool, message string, deliveryNote string) error {
+// (a replayed callback, or an admin changed the status meanwhile) or for an
+// attempt other than the latest are rejected with
+// ErrProductOrderStatusConflict. attemptId 0 skips the attempt check, for a
+// fulfiller that does not send it.
+func FinishProductOrderFulfillment(tradeNo string, attemptId int, succeeded bool, message string, deliveryNote string) error {
 	now := common.GetTimestamp()
 	updates := map[string]any{
 		"fulfillment_status":  ProductFulfillmentFailed,
@@ -607,9 +610,12 @@ func FinishProductOrderFulfillment(tradeNo string, succeeded bool, message strin
 			updates["delivery_note"] = deliveryNote
 		}
 	}
-	result := DB.Model(&ProductOrder{}).
-		Where("trade_no = ? AND status = ? AND fulfillment_status = ?", tradeNo, ProductOrderProcessing, ProductFulfillmentRunning).
-		Updates(updates)
+	query := DB.Model(&ProductOrder{}).
+		Where("trade_no = ? AND status = ? AND fulfillment_status = ?", tradeNo, ProductOrderProcessing, ProductFulfillmentRunning)
+	if attemptId > 0 {
+		query = query.Where("fulfillment_attempt_id = ?", attemptId)
+	}
+	result := query.Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -86,7 +86,7 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
-		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" {
+		if k == "theme.frontend" || k == "billing_setting.billing_mode" || k == "billing_setting.billing_expr" || k == "ResendKeyConfigured" || k == system_setting.ProductFulfillerConfigOption {
 			continue
 		}
 		value := common.Interface2String(v)
@@ -210,6 +210,11 @@ func UpdateOption(c *gin.Context) {
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
 			common.ApiErrorT(c, "Compliance confirmation fields cannot be changed through the general settings API")
+			return
+		}
+		// Encrypted; only the product fulfillment settings API writes it.
+		if option.Key == system_setting.ProductFulfillerConfigOption {
+			common.ApiErrorT(c, "Product fulfillment settings cannot be changed through the general settings API")
 			return
 		}
 		// The request plugin API validates each instance config.

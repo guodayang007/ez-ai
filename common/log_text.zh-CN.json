@@ -875,5 +875,8 @@
   "failed to record fulfiller failure of product order %s: %s": "记录商品订单 %s 的开通失败结果时出错：%s",
   "ignored fulfiller result for product order %s: order is no longer running": "已忽略商品订单 %s 的开通结果：订单已不在开通中",
   "failed to record fulfiller result of product order %s: %s": "记录商品订单 %s 的开通结果时出错：%s",
-  "failed to list fulfiller plans: %s": "获取开通服务的套餐列表失败：%s"
+  "failed to reach the product fulfiller: %s": "无法连接商品开通服务：%s",
+  "failed to record payment step %s of product order %s: %s": "记录支付步骤 %s 时出错（商品订单 %s）：%s",
+  "product fulfillment settings updated by user %d": "用户 %d 更新了商品开通设置",
+  "WARNING: CONFIG_ENCRYPTION_KEY is shorter than 32 characters; encrypted settings are disabled.": "警告：CONFIG_ENCRYPTION_KEY 少于 32 个字符，加密设置功能已停用。"
 }

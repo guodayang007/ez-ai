@@ -83,6 +83,8 @@ go build -o ez-ai . && ./ez-ai --log-dir ./logs
 cd web && bun run dev -- --port 5174
 ```
 
+一键重启（推荐）：`scripts/dev-restart.sh` 先编译后端，再重启后端、前端开发服务器和开通服务（`services/dogpay-fulfiller` 有 `.env` 和 `node_modules` 时），并等待它们可访问；编译失败时不停旧服务。`scripts/dev-restart.sh status` 查看状态，`scripts/dev-restart.sh stop` 全部停止。输出和 pid 在 `logs/dev/`。本地 Claude Code 的 Stop 钩子（`.claude/settings.local.json`）在每轮 AI 回复结束、且代码有变化时自动执行它。
+
 首次启动后端前需先构建一次前端：`cd web && bun install && bun run build`（后端通过 `go:embed` 内嵌 `web/dist`）。
 
 后端日志在 `logs/` 目录。
@@ -119,27 +121,40 @@ DEFAULT_USER_PASSWORD=12345678
 
 后台“商品订单”页的“执行支付”按钮会把订单交给独立服务 `services/dogpay-fulfiller`：它用买家提交的 ChatGPT Session 打开结账页，用 DogPay 虚拟卡付款，再回调 ez-ai 把订单置为已完成（失败则保留“处理中”并记录原因，可重试）。
 
+全部开通配置（服务地址、共享密钥、回调地址、可购买套餐、DogPay 卡、账单地址、浏览器代理）在后台“系统设置 → 计费 → 商品自动开通”填写，只有超级管理员可见。它们用 `CONFIG_ENCRYPTION_KEY` 以 AES-256-GCM 加密后，作为 `options` 表中的一条 `ProductFulfillerConfig` 保存（值以 `enc:v1:` 开头），通用设置接口既不返回也不能修改它。卡号、CVC、密钥和代理保存后不再显示，卡号只显示末四位。
+
+ez-ai 的 `.env` 必须有固定的加密密钥（本地已生成）：
+
+```
+CONFIG_ENCRYPTION_KEY=<至少 32 位，生成：openssl rand -hex 32>
+```
+
+未设置时这些配置不能保存；更换密钥后已保存的配置无法解密，需要换回原密钥或重新填写。
+
+开通服务本身只需要共享密钥：
+
 ```bash
 cd services/dogpay-fulfiller
 bun install
 bunx playwright install chromium     # 首次需要下载浏览器
-cp .env.example .env                 # 填写卡信息、FULFILLER_SECRET、ALLOWED_PLANS
+cp .env.example .env                 # 只填 FULFILLER_SECRET，与后台设置的共享密钥一致
 node src/server.mjs                  # 默认监听 127.0.0.1:3100
 npm test                             # 服务自身的单元测试
 ```
 
-ez-ai 的 `.env` 里加上：
+每次执行支付时，ez-ai 把卡和账单信息随任务发给开通服务，请求体用共享密钥派生的密钥加密并签名，网络上不出现明文卡号。
 
-```
-PRODUCT_FULFILLER_URL=http://127.0.0.1:3100
-PRODUCT_FULFILLER_SECRET=<与开通服务相同，至少 32 位>
-```
+浏览器代理填 `http://user:pass@host:port`（也支持 `https://`，以及不带账号密码的 `socks5://host:port`；浏览器不支持带认证的 SOCKS5）。每次执行时“启动浏览器”一步会记录 chatgpt.com 看到的出口 IP 和国家，出口国家与账单国家不一致时详细日志里会提示。
+
+开通服务不可用时，“执行支付”弹窗和设置页会说明原因（未设置加密密钥、配置无法解密、缺少哪些项、服务未启动、密钥不一致），并给出“前往开通设置”或“重新检查”。
 
 使用条件：
 
-- 点“执行支付”时在弹窗里选择要购买的套餐，可选项就是开通服务 `ALLOWED_PLANS` 里的套餐代码。
-- 只有“已支付”的订单，或自动支付失败的订单可以执行支付。
+- 点“执行支付”时在弹窗里选择要购买的套餐，可选项就是设置里的“可购买套餐”。
+- 执行支付不校验订单状态，任何状态的订单都可以执行；只有该订单的自动支付正在进行中时不能重复发起，避免重复扣卡。
 - 开通前会检查账号是否已有订阅，已有则不扣款；遇到验证码或 3-D Secure 时停止，需要人工完成。
+
+支付记录：每次点“执行支付”都会单独生成一条记录（表 `product_fulfillment_attempts`），按固定步骤记录进度：校验订单与设置 → 提交给开通服务 → 排队 → 启动浏览器 → 检查现有订阅 → 创建结账页 → 填写银行卡和账单地址 → 提交付款 → 等待付款结果 → 完成订单。前两步和最后一步由 ez-ai 记录，中间步骤由开通服务通过签名的进度回调（与结果回调同一地址，`type: "progress"`）上报，每一步的开始/结束时间、结果和详细日志都会保存。后台“商品订单”每行的“支付记录”按钮打开弹窗，查看每次执行当前到了哪一步、下一步是什么、是否成功；执行中的记录每 3 秒自动刷新。点“执行支付”成功后也会自动打开该弹窗。
 
 ## 7. 重置数据库
 

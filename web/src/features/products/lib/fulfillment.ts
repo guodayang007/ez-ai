@@ -16,20 +16,48 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { ProductOrder } from '../types'
+import type {
+  ProductFulfillerHealth,
+  ProductFulfillmentAttempt,
+  ProductFulfillmentStepState,
+  ProductOrder,
+} from '../types'
+
+/** Settings section that holds the fulfiller connection. */
+export const FULFILLER_SETTINGS_SECTION = 'product-fulfillment'
 
 /**
  * Whether "Execute payment" may buy a plan for the order with the DogPay card.
- * Mirrors CanStartProductFulfillment in model/product.go: the buyer has paid,
- * or an earlier automatic attempt failed.
+ * Mirrors CanStartProductFulfillment in model/product.go: any order status is
+ * accepted; only a purchase that is still running blocks a new one.
  */
 export function canExecutePayment(order: ProductOrder): boolean {
-  const fulfillment = order.fulfillment_status ?? ''
-  if (order.status === 'paid') {
-    return fulfillment === '' || fulfillment === 'failed'
-  }
-  if (order.status === 'processing') {
-    return fulfillment === 'failed'
-  }
-  return false
+  return order.fulfillment_status !== 'running'
+}
+
+/**
+ * Whether the fulfiller can take a payment: it answers and offers at least
+ * one plan.
+ */
+export function isFulfillerReady(health: ProductFulfillerHealth): boolean {
+  return health.status === 'ok' && health.plans.length > 0
+}
+
+export type AttemptProgress = {
+  /** The furthest step the attempt reached; null before any step ran. */
+  current: ProductFulfillmentStepState | null
+  /** The step that runs after the current one; null once the attempt ended. */
+  next: ProductFulfillmentStepState | null
+}
+
+/** Where a payment attempt stands and, while it runs, what comes next. */
+export function getAttemptProgress(
+  attempt: ProductFulfillmentAttempt
+): AttemptProgress {
+  const index = attempt.steps.findIndex(
+    (step) => step.key === attempt.current_step
+  )
+  const current = index >= 0 ? attempt.steps[index] : null
+  if (attempt.status !== 'running') return { current, next: null }
+  return { current, next: attempt.steps[index + 1] ?? null }
 }

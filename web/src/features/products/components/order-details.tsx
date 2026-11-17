@@ -29,7 +29,7 @@ import {
   PRODUCT_ORDER_STATUSES,
 } from '../constants'
 import { formatProductPrice } from '../lib/format'
-import type { ProductOrder } from '../types'
+import type { ProductFulfillmentStatus, ProductOrder } from '../types'
 
 type OrderDetailsProps = {
   order: ProductOrder
@@ -40,6 +40,20 @@ type OrderDetailsProps = {
 export function OrderStatusBadge(props: { status: ProductOrder['status'] }) {
   const { t } = useTranslation()
   const config = PRODUCT_ORDER_STATUSES[props.status]
+  return (
+    <StatusBadge
+      label={config ? t(config.labelKey) : props.status}
+      variant={config?.variant ?? 'neutral'}
+      copyable={false}
+    />
+  )
+}
+
+export function FulfillmentStatusBadge(props: {
+  status: ProductFulfillmentStatus
+}) {
+  const { t } = useTranslation()
+  const config = PRODUCT_FULFILLMENT_STATUSES[props.status]
   return (
     <StatusBadge
       label={config ? t(config.labelKey) : props.status}
@@ -78,19 +92,10 @@ export function OrderDetails(props: OrderDetailsProps) {
       value: <span className='font-mono'>{order.fulfillment_plan}</span>,
     })
   }
-  const fulfillment = order.fulfillment_status
-    ? PRODUCT_FULFILLMENT_STATUSES[order.fulfillment_status]
-    : undefined
-  if (fulfillment) {
+  if (order.fulfillment_status) {
     rows.push({
       label: t('Automatic payment'),
-      value: (
-        <StatusBadge
-          label={t(fulfillment.labelKey)}
-          variant={fulfillment.variant}
-          copyable={false}
-        />
-      ),
+      value: <FulfillmentStatusBadge status={order.fulfillment_status} />,
     })
   }
   if (order.completed_at > 0) {

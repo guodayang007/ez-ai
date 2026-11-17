@@ -7,6 +7,8 @@
 // purchase stops and the admin finishes it by hand.
 import { chromium } from 'playwright'
 
+import { formatMessage } from './message.mjs'
+
 const CHATGPT_ORIGIN = 'https://chatgpt.com'
 const ACCOUNT_CHECK_PATH = '/backend-api/accounts/check/v4-2023-04-27'
 const CHECKOUT_PATH = '/backend-api/payments/checkout'
@@ -34,52 +36,160 @@ const SUBMIT_SELECTORS = ['[data-testid="hosted-payment-submit-button"]', '.Subm
 const ERROR_SELECTORS = ['.FieldError', '.Notice--red', '.p-FieldError', '[role="alert"]']
 const VERIFICATION_FRAME_PATTERN = /hcaptcha|recaptcha|3ds|three-d-secure|challenge|authenticate/i
 
-class PurchaseError extends Error {}
+const PROGRESS_INTERVAL_POLLS = 15
 
 /**
+ * A failure the admin can act on. The message is an English key with
+ * {{name}} placeholders, translated on the ez-ai payment records page.
+ */
+class PurchaseError extends Error {
+  /**
+   * @param {string} key
+   * @param {Record<string, string>} [params]
+   */
+  constructor(key, params = {}) {
+    super(formatMessage(key, params))
+    this.key = key
+    this.params = params
+  }
+}
+
+/**
+ * The card, billing address and browser proxy come with each job from ez-ai,
+ * which stores them encrypted; only browser options are local.
  * @param {ReturnType<import('./config.mjs').loadConfig>} config
  */
 export function createChatGPTPurchaser(config) {
-  return async function purchase(job) {
-    const browser = await chromium.launch({
-      headless: config.headless,
-      proxy: config.browserProxy ? { server: config.browserProxy } : undefined,
-    })
+  /**
+   * @param {import('./app.mjs').PurchaseJob} job
+   * @param {import('./app.mjs').ReportStep} report
+   * @returns {Promise<import('./app.mjs').PurchaseResult>}
+   */
+  return async function purchase(job, report) {
+    // The step that is running, so a failure is recorded against it.
+    let current = 'browser'
+    const steps = {
+      start(step, messageKey, params) {
+        current = step
+        report(step, 'running', messageKey, params)
+      },
+      done(messageKey, params) {
+        report(current, 'succeeded', messageKey, params)
+      },
+      info(messageKey, params) {
+        report(current, 'info', messageKey, params)
+      },
+    }
+    let browser
     try {
+      steps.start('browser', 'Launching the browser')
+      const proxy = browserProxyOptions(job.browserProxy)
+      browser = await chromium.launch({ headless: config.headless, proxy })
       const context = await browser.newContext({ locale: 'en-US' })
       // ChatGPT API calls run from a tab that stays on chatgpt.com so they
       // carry its cookies; the checkout may be on another origin.
       const apiPage = await context.newPage()
       const page = await context.newPage()
-      return await buy(apiPage, page, config, job)
-    } catch (error) {
-      if (error instanceof PurchaseError) {
-        return { success: false, message: error.message }
+      try {
+        await apiPage.goto(CHATGPT_ORIGIN, { waitUntil: 'domcontentloaded' })
+      } catch (error) {
+        // A wrong proxy password shows up only as a timeout, so any failure
+        // here with a proxy points at the proxy.
+        if (proxy) {
+          throw new PurchaseError(
+            'Could not reach chatgpt.com through the browser proxy {{proxy}}: {{error}}. ' +
+              'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
+            { proxy: proxy.server, error: error.message.split('\n')[0] }
+          )
+        }
+        throw error
       }
-      return { success: false, message: `Unexpected error: ${error.message}` }
+      // Cloudflare in front of chatgpt.com reports the address it sees, so
+      // the record shows whether the proxy is used and where it exits.
+      const trace = await apiPage
+        .evaluate(async () => {
+          const response = await fetch('/cdn-cgi/trace')
+          return response.ok ? response.text() : ''
+        })
+        .catch(() => '')
+      const exit = {
+        ip: /^ip=(.+)$/m.exec(trace)?.[1] ?? 'unknown',
+        country: /^loc=(.+)$/m.exec(trace)?.[1] ?? 'unknown',
+      }
+      steps.done(
+        proxy
+          ? 'Opened chatgpt.com through the browser proxy; exit IP {{ip}} ({{country}})'
+          : 'Opened chatgpt.com without a browser proxy; exit IP {{ip}} ({{country}})',
+        exit
+      )
+      if (exit.country !== 'unknown' && job.billing.country && exit.country !== job.billing.country) {
+        steps.info(
+          'The browser exits in {{country}} but the billing country is {{billing}}; ChatGPT may refuse the checkout. ' +
+            'Set a browser proxy in {{billing}}.',
+          { country: exit.country, billing: job.billing.country }
+        )
+      }
+      return await buy(apiPage, page, job, steps)
+    } catch (error) {
+      const failure =
+        error instanceof PurchaseError ? error : new PurchaseError('Unexpected error: {{error}}', { error: error.message })
+      return { success: false, step: current, messageKey: failure.key, params: failure.params }
     } finally {
-      await browser.close()
+      await browser?.close()
     }
   }
 }
 
-async function buy(apiPage, page, config, job) {
-  await apiPage.goto(CHATGPT_ORIGIN, { waitUntil: 'domcontentloaded' })
+/**
+ * Playwright launch options for the proxy URL saved in ez-ai. Playwright keeps
+ * only the scheme and host of `server` and drops any user:pass in it, so the
+ * credentials are passed on their own.
+ * @param {string} proxyUrl such as http://user:pass@host:port
+ */
+export function browserProxyOptions(proxyUrl) {
+  if (!proxyUrl) return undefined
+  const url = new URL(proxyUrl)
+  const options = { server: `${url.protocol}//${url.host}` }
+  if (url.username) options.username = decodeURIComponent(url.username)
+  if (url.password) options.password = decodeURIComponent(url.password)
+  return options
+}
 
+async function buy(apiPage, page, job, steps) {
+  steps.start('subscription', 'Checking the subscription of the ChatGPT account')
   const before = await getSubscription(apiPage, job.accessToken)
   if (before.active) {
     throw new PurchaseError(
-      `The ChatGPT account already has an active ${before.plan || 'paid'} subscription; nothing was charged. ` +
-        'If an earlier attempt succeeded, mark the order completed by hand.'
+      'The ChatGPT account already has an active {{plan}} subscription; nothing was charged. ' +
+        'If an earlier attempt succeeded, mark the order completed by hand.',
+      { plan: before.plan || 'paid' }
     )
   }
+  steps.done('The account has no active subscription (current plan: {{plan}})', { plan: before.plan || 'free' })
 
-  const checkoutUrl = await createCheckout(apiPage, config, job)
+  steps.start('checkout', 'Creating a checkout for plan {{plan}}', { plan: job.plan })
+  const checkoutUrl = await createCheckout(apiPage, job)
+  steps.done('Checkout created: {{url}}', { url: checkoutUrl })
+
+  steps.start('fill_payment', 'Opening the checkout page and waiting for the card form')
   await page.goto(checkoutUrl, { waitUntil: 'domcontentloaded' })
-  await fillPayment(page, config)
-  await clickFirst(page, SUBMIT_SELECTORS, 'the pay button')
+  await fillPayment(page, job)
+  steps.done('Filled in the card ending in {{last4}}, the holder and the billing address ({{country}})', {
+    last4: job.card.number.slice(-4),
+    country: job.billing.country,
+  })
 
-  const deadline = Date.now() + PAYMENT_TIMEOUT_MS
+  steps.start('submit_payment', 'Clicking the pay button')
+  if (!(await clickFirst(page, SUBMIT_SELECTORS))) {
+    throw new PurchaseError('The checkout page has no pay button.')
+  }
+  steps.done('Clicked the pay button')
+
+  steps.start('confirm_payment', 'Waiting up to {{seconds}}s for the payment result', {
+    seconds: String(PAYMENT_TIMEOUT_MS / 1000),
+  })
+  const startedAt = Date.now()
+  const deadline = startedAt + PAYMENT_TIMEOUT_MS
   let polls = 0
   while (Date.now() < deadline) {
     await page.waitForTimeout(POLL_INTERVAL_MS)
@@ -88,30 +198,41 @@ async function buy(apiPage, page, config, job) {
     const verificationFrame = page.frames().find((frame) => VERIFICATION_FRAME_PATTERN.test(frame.url()))
     if (verificationFrame && (await isFrameShown(page, verificationFrame))) {
       throw new PurchaseError(
-        `Checkout asked for a captcha or 3-D Secure verification, so the payment was not finished. ` +
-          `Complete it by hand: ${checkoutUrl}`
+        'Checkout asked for a captcha or 3-D Secure verification, so the payment was not finished. ' +
+          'Complete it by hand: {{url}}',
+        { url: checkoutUrl }
       )
     }
     const errorText = await findErrorText(page)
     if (errorText) {
-      throw new PurchaseError(`Checkout rejected the payment: ${errorText}`)
+      throw new PurchaseError('Checkout rejected the payment: {{reason}}', { reason: errorText })
     }
     // Check the account every few polls; this also covers the embedded
     // checkout, which may not navigate after paying.
     if (polls % 3 === 0 || !isCheckoutUrl(page.url())) {
       const after = await getSubscription(apiPage, job.accessToken).catch(() => null)
       if (after?.active) {
+        const plan = after.plan || job.plan
+        steps.done('Payment went through, the account plan is now {{plan}}', { plan })
         return {
           success: true,
-          message: `Paid with DogPay, account plan is now ${after.plan || job.plan}`,
-          deliveryNote: `ChatGPT ${after.plan || job.plan} 订阅已开通`,
+          messageKey: 'Paid with DogPay, account plan is now {{plan}}',
+          params: { plan },
+          deliveryNote: `ChatGPT ${plan} 订阅已开通`,
         }
       }
     }
+    if (polls % PROGRESS_INTERVAL_POLLS === 0) {
+      steps.info('Still waiting for the payment result after {{seconds}}s (page: {{url}})', {
+        seconds: String(Math.round((Date.now() - startedAt) / 1000)),
+        url: page.url(),
+      })
+    }
   }
   throw new PurchaseError(
-    `No payment result within ${PAYMENT_TIMEOUT_MS / 1000}s. The card may have been charged: ` +
-      `check the ChatGPT account and DogPay records before retrying. Checkout: ${checkoutUrl}`
+    'No payment result within {{seconds}}s. The card may have been charged: ' +
+      'check the ChatGPT account and DogPay records before retrying. Checkout: {{url}}',
+    { seconds: String(PAYMENT_TIMEOUT_MS / 1000), url: checkoutUrl }
   )
 }
 
@@ -130,17 +251,24 @@ async function chatgptFetch(page, accessToken, path, init = {}) {
     throw new PurchaseError('The ChatGPT session has expired or was signed out; ask the buyer for a new session.')
   }
   if (response.status === 403 && /<html/i.test(response.text)) {
-    throw new PurchaseError('chatgpt.com blocked the request with a browser check; try another BROWSER_PROXY or retry later.')
+    throw new PurchaseError('chatgpt.com blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.')
   }
   let data
   try {
     data = JSON.parse(response.text)
   } catch {
-    throw new PurchaseError(`chatgpt.com ${path} returned HTTP ${response.status} without JSON.`)
+    throw new PurchaseError('chatgpt.com {{path}} returned HTTP {{status}} without JSON.', {
+      path,
+      status: String(response.status),
+    })
   }
   if (response.status >= 400) {
     const detail = typeof data?.detail === 'string' ? data.detail : JSON.stringify(data?.detail ?? data).slice(0, 300)
-    throw new PurchaseError(`chatgpt.com ${path} returned HTTP ${response.status}: ${detail}`)
+    throw new PurchaseError('chatgpt.com {{path}} returned HTTP {{status}}: {{detail}}', {
+      path,
+      status: String(response.status),
+      detail,
+    })
   }
   return data
 }
@@ -157,13 +285,13 @@ async function getSubscription(page, accessToken) {
   }
 }
 
-async function createCheckout(page, config, job) {
+async function createCheckout(page, job) {
   const data = await chatgptFetch(page, job.accessToken, CHECKOUT_PATH, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       plan_name: job.plan,
-      billing_details: { country: config.billing.country, currency: config.billing.currency },
+      billing_details: { country: job.billing.country, currency: job.billing.currency },
       checkout_ui_mode: 'redirect',
     }),
   })
@@ -175,8 +303,8 @@ async function createCheckout(page, config, job) {
     return `${CHATGPT_ORIGIN}/checkout/${entity}/${data.checkout_session_id}`
   }
   throw new PurchaseError(
-    `chatgpt.com did not return a checkout link (fields: ${Object.keys(data ?? {}).join(', ') || 'none'}). ` +
-      `Check that "${job.plan}" is a valid plan code.`
+    'chatgpt.com did not return a checkout link (fields: {{fields}}). Check that "{{plan}}" is a valid plan code.',
+    { fields: Object.keys(data ?? {}).join(', ') || 'none', plan: job.plan }
   )
 }
 
@@ -184,11 +312,11 @@ function isCheckoutUrl(url) {
   return /\/checkout\/|checkout\.stripe\.com|pay\.openai\.com/.test(url)
 }
 
-async function fillPayment(page, config) {
+async function fillPayment(page, job) {
   // The form renders after Stripe loads; wait for the card number anywhere.
-  await clickFirst(page, CARD_TAB_SELECTORS, null, 15_000)
+  await clickFirst(page, CARD_TAB_SELECTORS, 15_000)
   if (!(await findVisible(page, FIELDS.cardNumber, 60_000))) {
-    throw new PurchaseError(`The checkout page did not show a card form (${page.url()}).`)
+    throw new PurchaseError('The checkout page did not show a card form ({{url}}).', { url: page.url() })
   }
 
   const email = await findVisible(page, FIELDS.email, 0)
@@ -196,22 +324,22 @@ async function fillPayment(page, config) {
     throw new PurchaseError('Checkout asks for an email, which means the session is not attached to the checkout.')
   }
 
-  await typeInto(page, FIELDS.cardNumber, config.card.number, true)
-  await typeInto(page, FIELDS.cardExpiry, config.card.expiry.replace('/', ''), true)
-  await typeInto(page, FIELDS.cardCvc, config.card.cvc, true)
-  await typeInto(page, FIELDS.holder, config.card.holder, false)
+  await typeInto(page, FIELDS.cardNumber, job.card.number, true)
+  await typeInto(page, FIELDS.cardExpiry, job.card.expiry.replace('/', ''), true)
+  await typeInto(page, FIELDS.cardCvc, job.card.cvc, true)
+  await typeInto(page, FIELDS.holder, job.card.holder, false)
 
   const country = await findVisible(page, FIELDS.country, 0)
-  if (country) await country.selectOption(config.billing.country)
-  await clickFirst(page, MANUAL_ADDRESS_SELECTORS, null, 0)
-  await typeInto(page, FIELDS.line1, config.billing.line1, false)
-  await typeInto(page, FIELDS.city, config.billing.city, false)
-  await typeInto(page, FIELDS.postalCode, config.billing.postalCode, false)
+  if (country) await country.selectOption(job.billing.country)
+  await clickFirst(page, MANUAL_ADDRESS_SELECTORS, 0)
+  await typeInto(page, FIELDS.line1, job.billing.line1, false)
+  await typeInto(page, FIELDS.city, job.billing.city, false)
+  await typeInto(page, FIELDS.postalCode, job.billing.postalCode, false)
   const state = await findVisible(page, FIELDS.state, 0)
-  if (state && config.billing.state) {
+  if (state && job.billing.state) {
     const tag = await state.evaluate((el) => el.tagName)
-    if (tag === 'SELECT') await state.selectOption(config.billing.state)
-    else await state.fill(config.billing.state)
+    if (tag === 'SELECT') await state.selectOption(job.billing.state)
+    else await state.fill(job.billing.state)
   }
 
   const terms = await findVisible(page, TERMS_SELECTORS, 0)
@@ -222,7 +350,7 @@ async function typeInto(page, selectors, value, required) {
   if (!value) return
   const field = await findVisible(page, selectors, required ? 10_000 : 0)
   if (!field) {
-    if (required) throw new PurchaseError(`The checkout page has no ${selectors[0]} field.`)
+    if (required) throw new PurchaseError('The checkout page has no {{field}} field.', { field: selectors[0] })
     return
   }
   await field.fill('')
@@ -246,13 +374,12 @@ async function findVisible(page, selectors, timeoutMs) {
   return null
 }
 
-async function clickFirst(page, selectors, label, timeoutMs = 10_000) {
+/** Clicks the first visible match; false when none appeared in time. */
+async function clickFirst(page, selectors, timeoutMs = 10_000) {
   const target = await findVisible(page, selectors, timeoutMs)
-  if (!target) {
-    if (label) throw new PurchaseError(`The checkout page has no ${label}.`)
-    return
-  }
+  if (!target) return false
   await target.click()
+  return true
 }
 
 async function findErrorText(page) {

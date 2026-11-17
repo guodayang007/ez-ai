@@ -36,7 +36,7 @@ import type {
   ProductOrder,
   ProductOrderListParams,
 } from '../types'
-import { OrderStatusBadge } from './order-details'
+import { FulfillmentStatusBadge, OrderStatusBadge } from './order-details'
 
 type OrdersTableProps = {
   queryKey: readonly string[]
@@ -92,7 +92,15 @@ function useOrderColumns(props: OrdersTableProps): ColumnDef<ProductOrder>[] {
       accessorKey: 'status',
       header: t('Status'),
       meta: { mobileBadge: true },
-      cell: ({ row }) => <OrderStatusBadge status={row.original.status} />,
+      cell: ({ row }) => (
+        <div className='flex flex-col items-start gap-1'>
+          <OrderStatusBadge status={row.original.status} />
+          {/* Admins also see how the latest automatic payment went. */}
+          {row.original.fulfillment_status && (
+            <FulfillmentStatusBadge status={row.original.fulfillment_status} />
+          )}
+        </div>
+      ),
       size: 120,
     },
     {

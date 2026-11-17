@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi } from '@tanstack/react-router'
-import { CreditCard, Eye, RefreshCw } from 'lucide-react'
+import { CreditCard, Eye, History, RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -27,10 +27,10 @@ import { Button } from '@/components/ui/button'
 import { getAdminProductOrders } from './api'
 import { OrderManageDialog } from './components/order-manage-dialog'
 import { OrderPaymentDialog } from './components/order-payment-dialog'
+import { OrderPaymentRecordsDialog } from './components/order-payment-records-dialog'
 import { OrderStatusDialog } from './components/order-status-dialog'
 import { OrdersTable } from './components/orders-table'
 import { PRODUCT_ORDER_TRANSITIONS, PRODUCT_QUERY_KEYS } from './constants'
-import { canExecutePayment } from './lib/fulfillment'
 import type { ProductOrder } from './types'
 
 const route = getRouteApi('/_authenticated/product-orders/')
@@ -40,6 +40,7 @@ export function ProductOrdersPage() {
   const [selected, setSelected] = useState<ProductOrder | null>(null)
   const [statusTarget, setStatusTarget] = useState<ProductOrder | null>(null)
   const [payTarget, setPayTarget] = useState<ProductOrder | null>(null)
+  const [recordsTarget, setRecordsTarget] = useState<ProductOrder | null>(null)
 
   return (
     <>
@@ -78,10 +79,17 @@ export function ProductOrdersPage() {
                   variant='ghost'
                   size='sm'
                   onClick={() => setPayTarget(order)}
-                  disabled={!canExecutePayment(order)}
                 >
                   <CreditCard />
                   {t('Execute payment')}
+                </Button>
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  onClick={() => setRecordsTarget(order)}
+                >
+                  <History />
+                  {t('Payment records')}
                 </Button>
               </div>
             )}
@@ -99,6 +107,11 @@ export function ProductOrdersPage() {
       <OrderPaymentDialog
         order={payTarget}
         onOpenChange={(open) => !open && setPayTarget(null)}
+        onStarted={setRecordsTarget}
+      />
+      <OrderPaymentRecordsDialog
+        order={recordsTarget}
+        onOpenChange={(open) => !open && setRecordsTarget(null)}
       />
     </>
   )

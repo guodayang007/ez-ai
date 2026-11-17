@@ -64,6 +64,10 @@ func InitEnv() {
 	} else {
 		CryptoSecret = SessionSecret
 	}
+	ConfigEncryptionKey = strings.TrimSpace(os.Getenv("CONFIG_ENCRYPTION_KEY"))
+	if ConfigEncryptionKey != "" && !ConfigEncryptionReady() {
+		log.Println(LogText("WARNING: CONFIG_ENCRYPTION_KEY is shorter than 32 characters; encrypted settings are disabled."))
+	}
 	if err := InitSessionCookieSettings(); err != nil {
 		log.Fatal(err)
 	}

@@ -522,31 +522,16 @@ func AdminUpdateProductOrder(c *gin.Context) {
 	common.ApiSuccess(c, updated)
 }
 
-// AdminListProductFulfillmentPlans returns the plan codes the fulfiller may
-// buy, for the admin to choose from on "Execute payment".
-func AdminListProductFulfillmentPlans(c *gin.Context) {
-	config := service.GetProductFulfillerConfig()
-	if !config.Enabled() {
-		common.ApiErrorT(c, "Automatic fulfillment is not configured")
-		return
-	}
-	plans, err := service.GetProductFulfillerPlans(config)
-	if err != nil {
-		common.SysError(common.LogText("failed to list fulfiller plans: %s", err.Error()))
-		common.ApiErrorT(c, "The fulfillment service is unavailable")
-		return
-	}
-	common.ApiSuccess(c, gin.H{"plans": plans})
-}
-
 type productExecutePaymentRequest struct {
 	Plan string `json:"plan"`
 }
 
-// AdminExecuteProductOrderPayment starts the automatic purchase of a paid
-// order: the fulfiller service pays for the plan the admin chose with the
+// AdminExecuteProductOrderPayment starts the automatic purchase of an order
+// in any status: the fulfiller service pays for the plan the admin chose with the
 // DogPay card on the buyer's ChatGPT account and reports back through
-// ProductFulfillmentCallback.
+// ProductFulfillmentCallback. Every click that reaches a valid order is kept
+// as a payment record with its steps, including clicks rejected by the checks
+// below.
 func AdminExecuteProductOrderPayment(c *gin.Context) {
 	id, ok := productIdParam(c)
 	if !ok {
@@ -562,11 +547,6 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 		common.ApiErrorT(c, "Choose a plan to buy")
 		return
 	}
-	config := service.GetProductFulfillerConfig()
-	if !config.Enabled() {
-		common.ApiErrorT(c, "Automatic fulfillment is not configured")
-		return
-	}
 	order, err := model.GetProductOrder(id)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		common.ApiErrorT(c, "Order not found")
@@ -576,58 +556,80 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	// A click while a purchase runs is a duplicate, not a new attempt.
 	if !model.CanStartProductFulfillment(order) {
-		common.ApiErrorT(c, "Only paid orders, or orders whose automatic payment failed, can be paid")
+		common.ApiErrorT(c, "Automatic payment is already running for this order")
 		return
 	}
-	accessToken := order.ChatGPTAccessToken()
-	if accessToken == "" {
-		common.ApiErrorT(c, "This order has no ChatGPT session")
-		return
-	}
-	for _, field := range order.InputFields {
-		if field.Type != model.ProductInputChatGPTSession {
-			continue
-		}
-		if msg := validateChatGPTSession(order.Inputs[field.Key], time.Now()); msg != "" {
-			common.ApiErrorT(c, msg)
-			return
-		}
-	}
-	// Check the plan before touching the order, so a stale choice leaves the
-	// order as it was instead of recording a failed purchase.
-	plans, err := service.GetProductFulfillerPlans(config)
+	attempt, err := model.CreateProductFulfillmentAttempt(order, req.Plan, c.GetInt("id"), c.GetString("username"))
 	if err != nil {
-		common.SysError(common.LogText("failed to list fulfiller plans: %s", err.Error()))
-		common.ApiErrorT(c, "The fulfillment service is unavailable")
-		return
-	}
-	if !slices.Contains(plans, req.Plan) {
-		common.ApiErrorT(c, "The fulfillment service does not offer this plan")
-		return
-	}
-
-	if err := model.StartProductOrderFulfillment(id, req.Plan, order.Status, order.FulfillmentStatus); err != nil {
-		if errors.Is(err, model.ErrProductOrderStatusConflict) {
-			common.ApiErrorT(c, "Order status has changed, please refresh")
-			return
-		}
 		common.ApiError(c, err)
 		return
 	}
+
+	// The checks below leave the order as it was; only the record shows them.
+	failCheck := ""
+	config, err := service.LoadProductFulfillerConfig()
+	accessToken := order.ChatGPTAccessToken()
+	switch {
+	case err != nil || !config.Enabled():
+		failCheck = "Automatic fulfillment is not configured"
+	case accessToken == "":
+		failCheck = "This order has no ChatGPT session"
+	case !slices.Contains(config.Plans, req.Plan):
+		failCheck = "The fulfillment service does not offer this plan"
+	}
+	if failCheck == "" {
+		for _, field := range order.InputFields {
+			if field.Type != model.ProductInputChatGPTSession {
+				continue
+			}
+			if msg := validateChatGPTSession(order.Inputs[field.Key], time.Now()); msg != "" {
+				failCheck = msg
+				break
+			}
+		}
+	}
+	if failCheck != "" {
+		recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepPrepare, model.ProductFulfillmentStepFailed, failCheck, nil, model.ProductFulfillmentFailed)
+		common.ApiErrorT(c, failCheck)
+		return
+	}
+
+	if err := model.StartProductOrderFulfillment(id, req.Plan, attempt.Id, order.Status, order.FulfillmentStatus); err != nil {
+		if errors.Is(err, model.ErrProductOrderStatusConflict) {
+			recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepPrepare, model.ProductFulfillmentStepFailed,
+				"Order status has changed, please refresh", nil, model.ProductFulfillmentFailed)
+			common.ApiErrorT(c, "Order status has changed, please refresh")
+			return
+		}
+		recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepPrepare, model.ProductFulfillmentStepFailed,
+			"Unexpected error: {{error}}", map[string]string{"error": err.Error()}, model.ProductFulfillmentFailed)
+		common.ApiError(c, err)
+		return
+	}
+	recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepPrepare, model.ProductFulfillmentStepSucceeded,
+		"The order and the fulfillment settings are ready; buying {{plan}}", map[string]string{"plan": req.Plan}, "")
+	recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepSubmit, model.ProductFulfillmentStepRunning,
+		"Sending the job to the fulfillment service at {{url}}", map[string]string{"url": config.URL}, "")
 	submitErr := service.SubmitProductFulfillment(config, service.ProductFulfillmentJob{
 		TradeNo:     order.TradeNo,
+		AttemptId:   attempt.Id,
 		Plan:        req.Plan,
 		AccessToken: accessToken,
 	})
 	if submitErr != nil {
 		common.SysError(common.LogText("failed to submit product order %s to fulfiller: %s", order.TradeNo, submitErr.Error()))
-		if err := model.FinishProductOrderFulfillment(order.TradeNo, false, submitErr.Error(), ""); err != nil {
+		if err := model.FinishProductOrderFulfillment(order.TradeNo, attempt.Id, false, submitErr.Error(), ""); err != nil {
 			common.SysError(common.LogText("failed to record fulfiller failure of product order %s: %s", order.TradeNo, err.Error()))
 		}
+		recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepSubmit, model.ProductFulfillmentStepFailed,
+			"The fulfillment service did not accept the job: {{error}}", map[string]string{"error": submitErr.Error()}, model.ProductFulfillmentFailed)
 		common.ApiErrorT(c, "The fulfillment service did not accept the order")
 		return
 	}
+	recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepSubmit, model.ProductFulfillmentStepSucceeded,
+		"The fulfillment service accepted the job", nil, "")
 
 	updated, err := model.GetProductOrder(id)
 	if err != nil {
@@ -637,18 +639,64 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 	common.ApiSuccess(c, updated)
 }
 
-type productFulfillmentCallbackRequest struct {
-	TradeNo      string `json:"trade_no"`
-	Success      bool   `json:"success"`
-	Message      string `json:"message"`
-	DeliveryNote string `json:"delivery_note"`
+// recordProductFulfillmentEvent adds a step event written by ez-ai to the
+// payment record. The record only explains the payment, so failing to write
+// it is logged instead of failing the payment. An attempt that has already
+// ended (the fulfiller can finish before ez-ai notes that it accepted the
+// job) is left alone.
+func recordProductFulfillmentEvent(attempt *model.ProductFulfillmentAttempt, step, status, message string, params map[string]string, finalStatus string) {
+	event := model.NewProductFulfillmentEvent(step, status, message, params)
+	err := model.RecordProductFulfillmentEvent(attempt.Id, attempt.TradeNo, event, finalStatus)
+	if err != nil && !errors.Is(err, model.ErrProductOrderStatusConflict) {
+		common.SysError(common.LogText("failed to record payment step %s of product order %s: %s", step, attempt.TradeNo, err.Error()))
+	}
 }
 
-// ProductFulfillmentCallback receives the fulfiller's result. It is signed
-// with the shared secret instead of a user session.
+// AdminListProductOrderFulfillments returns every payment record of the
+// order, newest first, with each step and the detailed log.
+func AdminListProductOrderFulfillments(c *gin.Context) {
+	id, ok := productIdParam(c)
+	if !ok {
+		return
+	}
+	attempts, err := model.ListProductFulfillmentAttempts(id)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, attempts)
+}
+
+const productFulfillmentCallbackProgress = "progress"
+
+// productFulfillmentCallbackRequest is a progress event (type "progress") or
+// the final result (any other type) of a purchase. MessageKey and Params are
+// the translatable form of Message.
+type productFulfillmentCallbackRequest struct {
+	Type         string            `json:"type"`
+	TradeNo      string            `json:"trade_no"`
+	AttemptId    int               `json:"attempt_id"`
+	Step         string            `json:"step"`
+	Status       string            `json:"status"`
+	Success      bool              `json:"success"`
+	Message      string            `json:"message"`
+	MessageKey   string            `json:"message_key"`
+	Params       map[string]string `json:"params"`
+	DeliveryNote string            `json:"delivery_note"`
+}
+
+func (r productFulfillmentCallbackRequest) event(step, status string) model.ProductFulfillmentEvent {
+	if r.MessageKey != "" {
+		return model.NewProductFulfillmentEvent(step, status, r.MessageKey, r.Params)
+	}
+	return model.NewProductFulfillmentEvent(step, status, r.Message, nil)
+}
+
+// ProductFulfillmentCallback receives the fulfiller's progress and result.
+// It is signed with the shared secret instead of a user session.
 func ProductFulfillmentCallback(c *gin.Context) {
-	config := service.GetProductFulfillerConfig()
-	if !config.Enabled() {
+	config, err := service.LoadProductFulfillerConfig()
+	if err != nil || len(config.Secret) < service.ProductFulfillerSecretMinLength {
 		c.JSON(http.StatusNotFound, gin.H{"success": false})
 		return
 	}
@@ -669,19 +717,68 @@ func ProductFulfillmentCallback(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false})
 		return
 	}
+
+	if req.Type == productFulfillmentCallbackProgress {
+		if req.AttemptId <= 0 || !slices.Contains(model.ProductFulfillmentSteps, req.Step) || !model.IsProductFulfillmentEventStatus(req.Status) {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false})
+			return
+		}
+		err := model.RecordProductFulfillmentEvent(req.AttemptId, req.TradeNo, req.event(req.Step, req.Status), "")
+		if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, model.ErrProductOrderStatusConflict) {
+			c.JSON(http.StatusOK, gin.H{"success": true, "ignored": true})
+			return
+		}
+		if err != nil {
+			common.SysError(common.LogText("failed to record payment step %s of product order %s: %s", req.Step, req.TradeNo, err.Error()))
+			c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
 	message := truncateRunes(strings.TrimSpace(req.Message), 2000)
 	deliveryNote := truncateRunes(strings.TrimSpace(req.DeliveryNote), 5000)
-	err = model.FinishProductOrderFulfillment(req.TradeNo, req.Success, message, deliveryNote)
-	if errors.Is(err, model.ErrProductOrderStatusConflict) {
+	err = model.FinishProductOrderFulfillment(req.TradeNo, req.AttemptId, req.Success, message, deliveryNote)
+	orderChanged := errors.Is(err, model.ErrProductOrderStatusConflict)
+	if err != nil && !orderChanged {
+		common.SysError(common.LogText("failed to record fulfiller result of product order %s: %s", req.TradeNo, err.Error()))
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
+		return
+	}
+
+	attemptId := req.AttemptId
+	if attemptId == 0 {
+		// A fulfiller without attempt ids: the result belongs to the order's
+		// running attempt.
+		attemptId, err = model.FindRunningProductFulfillmentAttemptId(req.TradeNo)
+		if err != nil {
+			common.SysError(common.LogText("failed to record fulfiller result of product order %s: %s", req.TradeNo, err.Error()))
+		}
+	}
+	if attemptId > 0 {
+		event := req.event(req.Step, model.ProductFulfillmentStepFailed)
+		finalStatus := model.ProductFulfillmentFailed
+		if req.Success {
+			finalStatus = model.ProductFulfillmentSucceeded
+			event = model.NewProductFulfillmentEvent(model.ProductFulfillmentStepComplete, model.ProductFulfillmentStepSucceeded,
+				"Order completed and the delivery note saved", nil)
+			if orderChanged {
+				event = model.NewProductFulfillmentEvent(model.ProductFulfillmentStepComplete, model.ProductFulfillmentStepFailed,
+					"Paid, but the order changed meanwhile, so it was not completed automatically", nil)
+			}
+		}
+		err := model.RecordProductFulfillmentEvent(attemptId, req.TradeNo, event, finalStatus)
+		if err != nil && !errors.Is(err, model.ErrProductOrderStatusConflict) && !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(common.LogText("failed to record payment step %s of product order %s: %s", event.Step, req.TradeNo, err.Error()))
+		}
+	}
+
+	if orderChanged {
 		// Replayed callback, or an admin changed the order meanwhile. The
 		// fulfiller must not retry, so this is acknowledged.
 		common.SysLog(common.LogText("ignored fulfiller result for product order %s: order is no longer running", req.TradeNo))
 		c.JSON(http.StatusOK, gin.H{"success": true, "ignored": true})
-		return
-	}
-	if err != nil {
-		common.SysError(common.LogText("failed to record fulfiller result of product order %s: %s", req.TradeNo, err.Error()))
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})

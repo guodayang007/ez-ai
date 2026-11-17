@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -38,39 +39,59 @@ import {
   getServerErrorMessage,
 } from '@/lib/server-error-message'
 
-import { executeProductOrderPayment, getProductFulfillmentPlans } from '../api'
+import { executeProductOrderPayment, getProductFulfillerHealth } from '../api'
 import { PRODUCT_QUERY_KEYS } from '../constants'
 import { formatProductPrice } from '../lib/format'
+import {
+  canExecutePayment,
+  FULFILLER_SETTINGS_SECTION,
+  isFulfillerReady,
+} from '../lib/fulfillment'
 import type { ProductOrder } from '../types'
+import { FulfillerSetupNotice } from './fulfiller-setup-notice'
+import { OrderStatusBadge } from './order-details'
 
 type OrderPaymentDialogProps = {
   order: ProductOrder | null
   onOpenChange: (open: boolean) => void
+  /** Called with the order once its payment has started, to follow it. */
+  onStarted?: (order: ProductOrder) => void
 }
 
-/** Confirms "Execute payment" and lets the admin pick the plan to buy. */
+/**
+ * Confirms "Execute payment" and lets the admin pick the plan to buy. When
+ * the fulfiller cannot take the payment yet, it explains what to set up and
+ * the main button leads there instead of staying disabled.
+ */
 export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
   const { t, i18n } = useTranslation()
   const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const order = props.order
+  const payable = order !== null && canExecutePayment(order)
   const [plan, setPlan] = useState('')
 
-  const plansQuery = useQuery({
-    queryKey: PRODUCT_QUERY_KEYS.fulfillmentPlans,
+  const healthQuery = useQuery({
+    queryKey: PRODUCT_QUERY_KEYS.fulfillerHealth,
     queryFn: async () => {
-      const result = await getProductFulfillmentPlans()
+      const result = await getProductFulfillerHealth()
       if (!result.success || !result.data) throw createServerError(result)
-      return result.data.plans
+      return result.data
     },
-    enabled: order !== null,
+    enabled: payable,
+    // Re-check on every open: the admin may have just fixed the setup.
+    staleTime: 0,
+    meta: { errorToast: false },
   })
-  const plans = plansQuery.data ?? []
+  const health = healthQuery.data
+  const ready = health !== undefined && isFulfillerReady(health)
+  const plans = ready ? health.plans : []
 
   // A retry starts from the plan of the failed attempt; a single offered plan
   // is chosen for the admin.
   useEffect(() => {
-    const offered = plansQuery.data ?? []
+    const offered = healthQuery.data?.plans ?? []
     if (order?.fulfillment_plan && offered.includes(order.fulfillment_plan)) {
       setPlan(order.fulfillment_plan)
     } else if (offered.length === 1) {
@@ -78,7 +99,7 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
     } else {
       setPlan('')
     }
-  }, [order, plansQuery.data])
+  }, [order, healthQuery.data])
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -91,27 +112,121 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
         t('Payment started. The order completes automatically once DogPay pays')
       )
       props.onOpenChange(false)
+      if (order) props.onStarted?.(order)
     },
     onError: (error) => handleServerError(error),
-    // A rejected attempt is also recorded on the order, so refresh either way.
-    onSettled: () =>
-      queryClient.invalidateQueries({
+    // A rejected attempt is also recorded on the order and in its payment
+    // records, so refresh either way.
+    onSettled: () => {
+      void queryClient.invalidateQueries({
         queryKey: PRODUCT_QUERY_KEYS.adminOrders,
-      }),
+      })
+      void queryClient.invalidateQueries({
+        queryKey: PRODUCT_QUERY_KEYS.fulfillmentAttempts,
+      })
+    },
   })
 
+  const recheck = () => void healthQuery.refetch()
+  const openSettings = () => {
+    props.onOpenChange(false)
+    void navigate({
+      to: '/system-settings/billing/$section',
+      params: { section: FULFILLER_SETTINGS_SECTION },
+    })
+  }
+
+  // The main button always does something useful: pay, open the settings
+  // that need fixing, or check the service again after starting it.
+  let confirmText = t('Pay with DogPay')
+  let handleConfirm = () => mutation.mutate()
+  let confirmDisabled = !payable || !plan
+  // An encryption key or a stopped service is fixed on the server; the rest
+  // is fixed on the settings page.
+  const fixedInSettings =
+    health?.status === 'not_configured' ||
+    health?.status === 'unauthorized' ||
+    health?.status === 'config_unreadable'
+  if (payable && health && !ready) {
+    confirmText = fixedInSettings
+      ? t('Open fulfillment settings')
+      : t('Check again')
+    handleConfirm = fixedInSettings ? openSettings : recheck
+    confirmDisabled = healthQuery.isFetching
+  } else if (payable && healthQuery.isError) {
+    confirmText = t('Check again')
+    handleConfirm = recheck
+    confirmDisabled = healthQuery.isFetching
+  }
+
   const planItems = plans.map((value) => ({ value, label: value }))
-  let planHint = ''
-  if (plansQuery.isPending) {
-    planHint = t('Loading plans...')
-  } else if (plansQuery.isError) {
-    planHint = getServerErrorMessage(
-      plansQuery.error,
-      t('The fulfillment service is unavailable')
+
+  let body: ReactNode
+  if (order && !payable) {
+    body = (
+      <div className='space-y-2 text-sm'>
+        <div className='flex items-center gap-2'>
+          <span className='text-muted-foreground'>{t('Current status')}</span>
+          <OrderStatusBadge status={order.status} />
+        </div>
+        <p className='text-destructive'>
+          {t('Automatic payment is already running for this order')}
+        </p>
+      </div>
     )
-  } else if (plans.length === 0) {
-    planHint = t(
-      'The fulfillment service offers no plans. Add plan codes to its ALLOWED_PLANS'
+  } else if (healthQuery.isPending) {
+    body = (
+      <p className='text-muted-foreground text-sm'>
+        {t('Checking the fulfillment service...')}
+      </p>
+    )
+  } else if (healthQuery.isError) {
+    body = (
+      <p className='text-destructive text-sm'>
+        {getServerErrorMessage(
+          healthQuery.error,
+          t('The fulfillment service is unavailable')
+        )}
+      </p>
+    )
+  } else if (!ready) {
+    body = (
+      // The notice offers whichever of the two actions the main button
+      // does not.
+      <FulfillerSetupNotice
+        health={healthQuery.data}
+        showSettingsLink={!fixedInSettings}
+        onRecheck={fixedInSettings ? recheck : undefined}
+        isRechecking={healthQuery.isFetching}
+      />
+    )
+  } else {
+    body = (
+      <div className='space-y-2'>
+        <Label htmlFor='order-payment-plan'>{t('Plan to buy')}</Label>
+        <Select
+          items={planItems}
+          value={plan}
+          onValueChange={(value) => setPlan(String(value ?? ''))}
+        >
+          <SelectTrigger id='order-payment-plan' className='w-full font-mono'>
+            <SelectValue placeholder={t('Select')} />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {planItems.map((item) => (
+                <SelectItem
+                  key={item.value}
+                  value={item.value}
+                  className='font-mono'
+                >
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
     )
   }
 
@@ -136,40 +251,12 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
             )
           : ''
       }
-      confirmText={t('Pay with DogPay')}
-      disabled={!plan}
+      confirmText={confirmText}
+      disabled={confirmDisabled}
       isLoading={mutation.isPending}
-      handleConfirm={() => mutation.mutate()}
+      handleConfirm={handleConfirm}
     >
-      <div className='space-y-2'>
-        <Label htmlFor='order-payment-plan'>{t('Plan to buy')}</Label>
-        <Select
-          items={planItems}
-          value={plan}
-          onValueChange={(value) => setPlan(String(value ?? ''))}
-          disabled={plans.length === 0}
-        >
-          <SelectTrigger id='order-payment-plan' className='w-full font-mono'>
-            <SelectValue placeholder={t('Select')} />
-          </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
-            <SelectGroup>
-              {planItems.map((item) => (
-                <SelectItem
-                  key={item.value}
-                  value={item.value}
-                  className='font-mono'
-                >
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        {planHint && (
-          <p className='text-muted-foreground text-xs'>{planHint}</p>
-        )}
-      </div>
+      {body}
     </ConfirmDialog>
   )
 }

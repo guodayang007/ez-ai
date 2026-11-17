@@ -20,5 +20,5 @@ createServer((req, res) => {
     res.end()
   })
 }).listen(config.port, config.host, () => {
-  console.log(`dogpay-fulfiller listening on ${config.host}:${config.port}, plans: ${[...config.allowedPlans].join(', ')}`)
+  console.log(`dogpay-fulfiller listening on ${config.host}:${config.port}; plans and card come from ez-ai settings`)
 })

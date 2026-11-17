@@ -20,6 +20,8 @@ import type { StatusBadgeProps } from '@/components/status-badge'
 
 import type {
   ProductFulfillmentStatus,
+  ProductFulfillmentStepKey,
+  ProductFulfillmentStepStatus,
   ProductInputType,
   ProductOrderStatus,
 } from './types'
@@ -29,7 +31,9 @@ export const PRODUCT_QUERY_KEYS = {
   adminOrders: ['admin-product-orders'] as const,
   storeProducts: ['store-products'] as const,
   selfOrders: ['self-product-orders'] as const,
-  fulfillmentPlans: ['product-fulfillment-plans'] as const,
+  fulfillerHealth: ['product-fulfiller-health'] as const,
+  fulfillerConfig: ['product-fulfiller-config'] as const,
+  fulfillmentAttempts: ['product-fulfillment-attempts'] as const,
 }
 
 // labelKey values are i18n keys; render them with t(config.labelKey).
@@ -69,6 +73,36 @@ export const PRODUCT_FULFILLMENT_STATUSES: Record<
   succeeded: { labelKey: 'Paid automatically', variant: 'success' },
   failed: { labelKey: 'Payment failed', variant: 'danger' },
 }
+
+// Mirrors ProductFulfillmentSteps in model/product_fulfillment_attempt.go.
+export const PRODUCT_FULFILLMENT_STEPS: Record<
+  ProductFulfillmentStepKey,
+  { labelKey: string }
+> = {
+  prepare: { labelKey: 'Check order and settings' },
+  submit: { labelKey: 'Send to fulfillment service' },
+  queue: { labelKey: 'Wait in queue' },
+  browser: { labelKey: 'Open browser' },
+  subscription: { labelKey: 'Check existing subscription' },
+  checkout: { labelKey: 'Create checkout' },
+  fill_payment: { labelKey: 'Fill in card and billing address' },
+  submit_payment: { labelKey: 'Submit payment' },
+  confirm_payment: { labelKey: 'Wait for payment result' },
+  complete: { labelKey: 'Complete order' },
+}
+
+export const PRODUCT_FULFILLMENT_STEP_STATUSES: Record<
+  ProductFulfillmentStepStatus,
+  Pick<StatusBadgeProps, 'variant'> & { labelKey: string }
+> = {
+  pending: { labelKey: 'Not run', variant: 'neutral' },
+  running: { labelKey: 'In progress', variant: 'blue' },
+  succeeded: { labelKey: 'Done', variant: 'success' },
+  failed: { labelKey: 'Failed', variant: 'danger' },
+}
+
+// How often the payment records refresh while an attempt is running.
+export const PRODUCT_FULFILLMENT_POLL_MS = 3000
 
 export const PRODUCT_ORDER_STATUS_VALUES = Object.keys(
   PRODUCT_ORDER_STATUSES

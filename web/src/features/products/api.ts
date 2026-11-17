@@ -22,6 +22,10 @@ import type {
   ApiResponse,
   PageData,
   Product,
+  ProductFulfillerHealth,
+  ProductFulfillmentAttempt,
+  ProductFulfillmentConfigUpdate,
+  ProductFulfillmentConfigView,
   ProductOrder,
   ProductOrderListParams,
   ProductPayload,
@@ -106,11 +110,30 @@ export async function getAdminProductOrders(
   return res.data
 }
 
-/** Plan codes the fulfiller service may buy (its ALLOWED_PLANS). */
-export async function getProductFulfillmentPlans(): Promise<
-  ApiResponse<{ plans: string[] }>
+/**
+ * Whether the fulfiller service can be used, and the plan codes it may buy
+ * (its ALLOWED_PLANS).
+ */
+export async function getProductFulfillerHealth(): Promise<
+  ApiResponse<ProductFulfillerHealth>
 > {
-  const res = await api.get('/api/product/admin/fulfillment/plans')
+  const res = await api.get('/api/product/admin/fulfillment/status')
+  return res.data
+}
+
+/** The saved fulfiller settings, without their secrets. Root only. */
+export async function getProductFulfillmentConfig(): Promise<
+  ApiResponse<ProductFulfillmentConfigView>
+> {
+  const res = await api.get('/api/product/admin/fulfillment/config')
+  return res.data
+}
+
+/** Saves the fulfiller settings; the server stores them encrypted. */
+export async function updateProductFulfillmentConfig(
+  payload: ProductFulfillmentConfigUpdate
+): Promise<ApiResponse<ProductFulfillmentConfigView>> {
+  const res = await api.put('/api/product/admin/fulfillment/config', payload)
   return res.data
 }
 
@@ -120,6 +143,14 @@ export async function executeProductOrderPayment(
   plan: string
 ): Promise<ApiResponse<ProductOrder>> {
   const res = await api.post(`/api/product/admin/orders/${id}/pay`, { plan })
+  return res.data
+}
+
+/** Every payment attempt of the order, newest first, with steps and log. */
+export async function getProductOrderFulfillments(
+  id: number
+): Promise<ApiResponse<ProductFulfillmentAttempt[]>> {
+  const res = await api.get(`/api/product/admin/orders/${id}/fulfillments`)
   return res.data
 }
 

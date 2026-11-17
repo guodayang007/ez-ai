@@ -227,7 +227,11 @@ func SetApiRouter(router *gin.Engine) {
 			productAdminRoute.GET("/orders", controller.AdminListProductOrders)
 			productAdminRoute.PUT("/orders/:id", controller.AdminUpdateProductOrder)
 			productAdminRoute.POST("/orders/:id/pay", middleware.CriticalRateLimit(), controller.AdminExecuteProductOrderPayment)
-			productAdminRoute.GET("/fulfillment/plans", controller.AdminListProductFulfillmentPlans)
+			productAdminRoute.GET("/orders/:id/fulfillments", controller.AdminListProductOrderFulfillments)
+			productAdminRoute.GET("/fulfillment/status", controller.AdminGetProductFulfillmentStatus)
+			// The settings include the payment card, so only the root user sees them.
+			productAdminRoute.GET("/fulfillment/config", middleware.RootAuth(), controller.AdminGetProductFulfillmentConfig)
+			productAdminRoute.PUT("/fulfillment/config", middleware.RootAuth(), controller.AdminUpdateProductFulfillmentConfig)
 		}
 
 		// Subscription payment callbacks (no auth)

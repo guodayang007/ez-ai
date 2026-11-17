@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -32,9 +33,14 @@ func setupProductTestDB(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.Product{}, &model.ProductSku{}, &model.ProductOrder{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.SystemTask{}, &model.Product{}, &model.ProductSku{}, &model.ProductOrder{}, &model.ProductFulfillmentAttempt{}))
 	model.DB = db
-	t.Cleanup(func() { model.DB = previousDB })
+	previousOptions := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.OptionMap = previousOptions
+	})
 }
 
 func callProductHandler(t *testing.T, handler gin.HandlerFunc, userId int, id int, body string) productTestResponse {
@@ -205,12 +211,159 @@ func TestNormalizeProductRejectsOriginalPriceBelowPrice(t *testing.T) {
 	assert.Equal(t, "Original price cannot be lower than the price", msg)
 }
 
+const productTestEncryptionKey = "test-config-encryption-key-0123456789"
+
+// useProductFulfillerConfig saves the fulfiller settings encrypted, as the
+// settings page does.
+func useProductFulfillerConfig(t *testing.T, config service.ProductFulfillerConfig) {
+	t.Helper()
+	previousKey, previousConfig := common.ConfigEncryptionKey, system_setting.ProductFulfillerConfig
+	t.Cleanup(func() {
+		common.ConfigEncryptionKey, system_setting.ProductFulfillerConfig = previousKey, previousConfig
+	})
+	common.ConfigEncryptionKey = productTestEncryptionKey
+	require.NoError(t, service.SaveProductFulfillerConfig(config))
+}
+
+func completeProductFulfillerConfig(url, secret string) service.ProductFulfillerConfig {
+	return service.ProductFulfillerConfig{
+		URL:    url,
+		Secret: secret,
+		Plans:  []string{"chatgptplusplan"},
+		Card:   service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "12/30", CVC: "123", Holder: "Test Holder"},
+	}
+}
+
+func TestProductFulfillmentStatusExplainsSetupProblems(t *testing.T) {
+	setupProductTestDB(t)
+	const secret = "0123456789abcdef0123456789abcdef"
+	fulfiller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/ping" || !service.VerifyProductFulfillerSignature(secret,
+			r.Header.Get(service.ProductFulfillerTimestampHeader),
+			r.Header.Get(service.ProductFulfillerSignatureHeader), nil, time.Now()) {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer fulfiller.Close()
+	stopped := httptest.NewServer(http.NotFoundHandler())
+	stoppedURL := stopped.URL
+	stopped.Close()
+
+	tests := []struct {
+		name   string
+		key    string
+		config *service.ProductFulfillerConfig
+		want   string
+	}{
+		{name: "no encryption key", want: `{"status":"key_missing","plans":[],"service_url":"","missing":[]}`},
+		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"service_url":"","missing":["url","secret","plans","card_number","card_expiry","card_cvc","card_holder"]}`},
+		{name: "card missing", key: productTestEncryptionKey, config: &service.ProductFulfillerConfig{URL: fulfiller.URL, Secret: secret, Plans: []string{"chatgptplusplan"}}, want: `{"status":"not_configured","plans":[],"service_url":"` + fulfiller.URL + `","missing":["card_number","card_expiry","card_cvc","card_holder"]}`},
+		{name: "saved under another key", key: "another-config-encryption-key-0123456789", config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"config_unreadable","plans":[],"service_url":"","missing":[]}`},
+		{name: "service not running", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(stoppedURL, secret)), want: `{"status":"unreachable","plans":[],"service_url":"` + stoppedURL + `","missing":[]}`},
+		{name: "secret differs from the service", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, strings.Repeat("x", 32))), want: `{"status":"unauthorized","plans":[],"service_url":"` + fulfiller.URL + `","missing":[]}`},
+		{name: "ready", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"ok","plans":["chatgptplusplan"],"service_url":"` + fulfiller.URL + `","missing":[]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			useProductFulfillerConfig(t, service.ProductFulfillerConfig{})
+			system_setting.ProductFulfillerConfig = ""
+			if tt.config != nil {
+				require.NoError(t, service.SaveProductFulfillerConfig(*tt.config))
+			}
+			common.ConfigEncryptionKey = tt.key
+
+			resp := callProductHandler(t, AdminGetProductFulfillmentStatus, 1, 0, "")
+			require.True(t, resp.Success, resp.Message)
+			assert.JSONEq(t, tt.want, string(resp.Data))
+		})
+	}
+}
+
+func TestProductFulfillmentConfigIsStoredEncrypted(t *testing.T) {
+	setupProductTestDB(t)
+	useProductFulfillerConfig(t, service.ProductFulfillerConfig{})
+	const secret = "0123456789abcdef0123456789abcdef"
+
+	saved := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{
+		"url":"http://127.0.0.1:3100/","secret":"`+secret+`","plans":["chatgptplusplan"," chatgptplusplan","chatgptproplan"],
+		"card_number":"4242 4242 4242 4242","card_expiry":"12/30","card_cvc":"123","card_holder":"Test Holder",
+		"billing":{"country":"us","currency":"usd","city":"Austin"},"browser_proxy":"http://user:pass@proxy:8080"}`)
+	require.True(t, saved.Success, saved.Message)
+	var view map[string]any
+	require.NoError(t, common.Unmarshal(saved.Data, &view))
+	assert.Equal(t, "http://127.0.0.1:3100", view["url"])
+	assert.Equal(t, []any{"chatgptplusplan", "chatgptproplan"}, view["plans"])
+	assert.Equal(t, "4242", view["card_last4"])
+	assert.Equal(t, true, view["has_secret"])
+	assert.Equal(t, true, view["has_card_cvc"])
+	assert.Equal(t, true, view["has_browser_proxy"])
+	assert.Equal(t, map[string]any{"country": "US", "currency": "USD", "line1": "", "city": "Austin", "state": "", "postal_code": ""}, view["billing"])
+	assert.NotContains(t, string(saved.Data), secret, "the secret is never sent back")
+	assert.NotContains(t, string(saved.Data), "4242424242424242", "the card number is never sent back")
+	assert.NotContains(t, string(saved.Data), "pass@", "the proxy credentials are never sent back")
+
+	var stored model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: system_setting.ProductFulfillerConfigOption}).First(&stored).Error)
+	assert.True(t, strings.HasPrefix(stored.Value, "enc:v1:"))
+	for _, plain := range []string{secret, "4242424242424242", "Test Holder", "chatgptplusplan", "Austin"} {
+		assert.NotContains(t, stored.Value, plain, "the database holds no plain text")
+	}
+
+	// Leaving the secrets out keeps them; an empty proxy clears it.
+	kept := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{
+		"url":"http://127.0.0.1:3100","plans":["chatgptplusplan"],"card_expiry":"01/31","card_holder":"Test Holder","browser_proxy":""}`)
+	require.True(t, kept.Success, kept.Message)
+	config, err := service.LoadProductFulfillerConfig()
+	require.NoError(t, err)
+	assert.Equal(t, secret, config.Secret)
+	assert.Equal(t, service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "01/31", CVC: "123", Holder: "Test Holder"}, config.Card)
+	assert.Empty(t, config.BrowserProxy)
+
+	invalid := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"card_number":"1234","plans":[]}`)
+	assert.Equal(t, "The card number must be 12-19 digits", invalid.Message)
+	unchanged, err := service.LoadProductFulfillerConfig()
+	require.NoError(t, err)
+	assert.Equal(t, config, unchanged, "a rejected save keeps the stored settings")
+
+	for proxy, message := range map[string]string{
+		"ftp://proxy:21":                "Provide a valid proxy URL such as http://user:pass@host:port",
+		"proxy:8080":                    "Provide a valid proxy URL such as http://user:pass@host:port",
+		"socks5://user:pass@proxy:1080": "The browser cannot use a SOCKS5 proxy with a username and password; use an HTTP proxy instead",
+	} {
+		rejected := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"`+proxy+`"}`)
+		assert.Equal(t, message, rejected.Message, proxy)
+	}
+	accepted := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"socks5://proxy:1080"}`)
+	require.True(t, accepted.Success, accepted.Message)
+
+	common.ConfigEncryptionKey = ""
+	noKey := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"plans":[]}`)
+	assert.False(t, noKey.Success, "nothing is saved without an encryption key")
+}
+
+func TestProductFulfillerPayloadMatchesTheFulfiller(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	// Sealed by ez-ai; services/dogpay-fulfiller/test/app.test.mjs opens the
+	// same body.
+	body := []byte(`{"sealed":"mLmL6sgh1/dWVrXMLNoh8hp0ZVolvIggRGD2zWRkEN4bIiH5H4W0gdpO8crxNg=="}`)
+	plaintext, err := service.OpenProductFulfillerPayload(secret, body)
+	require.NoError(t, err)
+	assert.Equal(t, `{"trade_no":"PO1"}`, string(plaintext))
+
+	_, err = service.OpenProductFulfillerPayload(strings.Repeat("x", 32), body)
+	assert.Error(t, err, "another secret cannot open the job")
+}
+
 func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	setupProductTestDB(t)
 	const secret = "0123456789abcdef0123456789abcdef"
 	const token = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.c2lnbmF0dXJl"
 	var received []service.ProductFulfillmentJob
 	rejectJobs := false
+	// Like the real fulfiller, reports its first step before answering.
+	var reportQueued func(job service.ProductFulfillmentJob)
 	fulfiller := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -218,23 +371,25 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 			r.Header.Get(service.ProductFulfillerTimestampHeader),
 			r.Header.Get(service.ProductFulfillerSignatureHeader), body, time.Now()),
 			"requests sent to the fulfiller are signed")
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/plans" {
-			_, _ = w.Write([]byte(`{"plans":["chatgptplusplan","chatgptpro"]}`))
-			return
-		}
+		plaintext, err := service.OpenProductFulfillerPayload(secret, body)
+		require.NoError(t, err, "jobs are encrypted with the shared secret")
+		assert.NotContains(t, string(body), "4242424242424242", "the card is not sent in plain text")
 		var job service.ProductFulfillmentJob
-		require.NoError(t, common.Unmarshal(body, &job))
+		require.NoError(t, common.Unmarshal(plaintext, &job))
 		received = append(received, job)
 		if rejectJobs {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		reportQueued(job)
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer fulfiller.Close()
-	t.Setenv("PRODUCT_FULFILLER_URL", fulfiller.URL)
-	t.Setenv("PRODUCT_FULFILLER_SECRET", secret)
-	t.Setenv("PRODUCT_FULFILLER_CALLBACK_URL", "https://ez-ai.test/api/product/fulfillment/callback")
+	config := completeProductFulfillerConfig(fulfiller.URL, secret)
+	config.Plans = []string{"chatgptplusplan", "chatgptpro"}
+	config.CallbackURL = "https://ez-ai.test/api/product/fulfillment/callback"
+	config.Billing = service.ProductFulfillerBilling{City: "Austin"}
+	useProductFulfillerConfig(t, config)
 
 	product := &model.Product{
 		Title:       "ChatGPT",
@@ -272,25 +427,44 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 		ProductFulfillmentCallback(c)
 		return recorder.Code
 	}
-
-	plans := callProductHandler(t, AdminListProductFulfillmentPlans, 1, 0, "")
-	require.True(t, plans.Success, plans.Message)
-	assert.JSONEq(t, `{"plans":["chatgptplusplan","chatgptpro"]}`, string(plans.Data))
+	reportQueued = func(job service.ProductFulfillmentJob) {
+		progress := `{"type":"progress","trade_no":"` + job.TradeNo + `","attempt_id":` + strconv.Itoa(job.AttemptId) +
+			`,"step":"queue","status":"running","message":"Queued, starting now","message_key":"Queued, starting now"}`
+		assert.Equal(t, http.StatusOK, callback(progress, true))
+	}
+	attempts := func(orderId int) []model.ProductFulfillmentAttempt {
+		list, err := model.ListProductFulfillmentAttempts(orderId)
+		require.NoError(t, err)
+		return list
+	}
+	stepOf := func(attempt model.ProductFulfillmentAttempt, key string) model.ProductFulfillmentStepState {
+		for _, step := range attempt.Steps {
+			if step.Key == key {
+				return step
+			}
+		}
+		t.Fatalf("attempt %d has no step %s", attempt.Id, key)
+		return model.ProductFulfillmentStepState{}
+	}
 
 	const payPlus = `{"plan":" chatgptplusplan "}`
+	// The order stays pending: execute payment does not check the order status.
 	order := placeOrder(product.Skus[0].Id)
-	unpaid := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
-	assert.False(t, unpaid.Success, "a pending order is not paid for until the buyer has paid")
-	require.True(t, callProductHandler(t, AdminUpdateProductOrder, 1, order.Id, `{"status":"paid"}`).Success)
-
 	noPlan := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, `{"plan":""}`)
 	assert.Equal(t, "Choose a plan to buy", noPlan.Message)
 	notOffered := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, `{"plan":"chatgptteamplan"}`)
 	assert.Equal(t, "The fulfillment service does not offer this plan", notOffered.Message)
 	stored, err := model.GetProductOrder(order.Id)
 	require.NoError(t, err)
-	assert.Equal(t, model.ProductOrderPaid, stored.Status, "a rejected plan leaves the order untouched")
+	assert.Equal(t, model.ProductOrderPending, stored.Status, "a rejected plan leaves the order untouched")
 	assert.Empty(t, received)
+	records := attempts(order.Id)
+	require.Len(t, records, 1, "a click without a plan is not a payment attempt; a refused plan is")
+	assert.Equal(t, model.ProductFulfillmentFailed, records[0].Status)
+	assert.Equal(t, model.ProductFulfillmentStepPrepare, records[0].CurrentStep)
+	assert.Equal(t, model.ProductFulfillmentStepFailed, stepOf(records[0], model.ProductFulfillmentStepPrepare).Status)
+	assert.Equal(t, "The fulfillment service does not offer this plan", stepOf(records[0], model.ProductFulfillmentStepPrepare).Message)
+	assert.Equal(t, model.ProductFulfillmentStepPending, stepOf(records[0], model.ProductFulfillmentStepSubmit).Status)
 
 	// The fulfiller is down: the attempt is recorded as failed and can be retried.
 	rejectJobs = true
@@ -302,21 +476,56 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, model.ProductFulfillmentFailed, stored.FulfillmentStatus)
 	assert.Contains(t, stored.FulfillmentMessage, "HTTP 503")
 	assert.Equal(t, "chatgptplusplan", stored.FulfillmentPlan, "the chosen plan is recorded on the order")
+	records = attempts(order.Id)
+	require.Len(t, records, 2)
+	assert.Equal(t, 2, records[0].Seq, "the newest attempt comes first")
+	assert.Equal(t, model.ProductFulfillmentFailed, records[0].Status)
+	assert.Equal(t, model.ProductFulfillmentStepSucceeded, stepOf(records[0], model.ProductFulfillmentStepPrepare).Status)
+	submit := stepOf(records[0], model.ProductFulfillmentStepSubmit)
+	assert.Equal(t, model.ProductFulfillmentStepFailed, submit.Status)
+	assert.Equal(t, "The fulfillment service did not accept the job: {{error}}", submit.Message)
+	assert.Contains(t, submit.Params["error"], "HTTP 503")
 
 	rejectJobs = false
 	started := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	require.True(t, started.Success, started.Message)
 	require.Len(t, received, 2)
+	records = attempts(order.Id)
+	require.Len(t, records, 3)
+	running := records[0]
+	assert.Equal(t, model.ProductFulfillmentRunning, running.Status)
+	assert.Equal(t, 1, running.OperatorId)
+	assert.Equal(t, model.ProductFulfillmentStepQueue, running.CurrentStep, "ez-ai noting the accepted job does not move back past the fulfiller's step")
+	assert.Equal(t, model.ProductFulfillmentStepSucceeded, stepOf(running, model.ProductFulfillmentStepSubmit).Status)
+	assert.Equal(t, "The fulfillment service accepted the job", stepOf(running, model.ProductFulfillmentStepSubmit).Message)
+	assert.Equal(t, model.ProductFulfillmentStepRunning, stepOf(running, model.ProductFulfillmentStepQueue).Status)
 	assert.Equal(t, service.ProductFulfillmentJob{
 		TradeNo:     order.TradeNo,
+		AttemptId:   running.Id,
 		Plan:        "chatgptplusplan",
 		AccessToken: token,
 		CallbackURL: "https://ez-ai.test/api/product/fulfillment/callback",
-	}, received[1])
+		Card:        config.Card,
+		Billing:     service.ProductFulfillerBilling{Country: "US", Currency: "USD", City: "Austin"},
+	}, received[1], "the job carries the card and the billing address with default country and currency")
 
 	again := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
-	assert.False(t, again.Success, "a running purchase cannot be started twice")
+	assert.Equal(t, "Automatic payment is already running for this order", again.Message, "a running purchase cannot be started twice")
 	require.Len(t, received, 2, "the card is not charged a second time")
+	assert.Len(t, attempts(order.Id), 3, "a duplicate click is not a new attempt")
+
+	checkout := `{"type":"progress","trade_no":"` + order.TradeNo + `","attempt_id":` + strconv.Itoa(running.Id) +
+		`,"step":"checkout","status":"succeeded","message":"Checkout created: https://pay.test/1","message_key":"Checkout created: {{url}}","params":{"url":"https://pay.test/1"}}`
+	assert.Equal(t, http.StatusOK, callback(checkout, true))
+	unknownStep := strings.Replace(checkout, `"step":"checkout"`, `"step":"pay_twice"`, 1)
+	assert.Equal(t, http.StatusBadRequest, callback(unknownStep, true))
+	otherOrder := strings.Replace(checkout, order.TradeNo, "PO-other", 1)
+	assert.Equal(t, http.StatusOK, callback(otherOrder, true), "progress for another order is acknowledged and dropped")
+	running = attempts(order.Id)[0]
+	assert.Equal(t, model.ProductFulfillmentStepCheckout, running.CurrentStep)
+	assert.Equal(t, model.ProductFulfillmentStepSucceeded, stepOf(running, model.ProductFulfillmentStepQueue).Status, "a later step closes the earlier one")
+	assert.Equal(t, map[string]string{"url": "https://pay.test/1"}, stepOf(running, model.ProductFulfillmentStepCheckout).Params)
+	assert.Equal(t, model.ProductFulfillmentStepPending, stepOf(running, model.ProductFulfillmentStepFillPayment).Status)
 
 	success := `{"trade_no":"` + order.TradeNo + `","success":true,"delivery_note":"ChatGPT Plus activated"}`
 	assert.Equal(t, http.StatusUnauthorized, callback(success, false), "unsigned results are rejected")
@@ -331,12 +540,49 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, model.ProductFulfillmentSucceeded, stored.FulfillmentStatus)
 	assert.Equal(t, "ChatGPT Plus activated", stored.DeliveryNote)
 	assert.Positive(t, stored.CompletedAt)
+	finished := attempts(order.Id)[0]
+	assert.Equal(t, model.ProductFulfillmentSucceeded, finished.Status, "a result without an attempt id finishes the running attempt")
+	assert.Equal(t, model.ProductFulfillmentStepComplete, finished.CurrentStep)
+	assert.Positive(t, finished.FinishedAt)
+	for _, step := range finished.Steps {
+		assert.Equal(t, model.ProductFulfillmentStepSucceeded, step.Status, step.Key)
+	}
 
 	failedReplay := `{"trade_no":"` + order.TradeNo + `","success":false,"message":"card declined"}`
 	assert.Equal(t, http.StatusOK, callback(failedReplay, true), "late results are acknowledged so the fulfiller stops retrying")
 	stored, err = model.GetProductOrder(order.Id)
 	require.NoError(t, err)
 	assert.Equal(t, model.ProductFulfillmentSucceeded, stored.FulfillmentStatus, "a late result does not overwrite a finished purchase")
+	assert.Equal(t, model.ProductFulfillmentSucceeded, attempts(order.Id)[0].Status, "nor its payment record")
+
+	rerun := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
+	require.True(t, rerun.Success, "a completed order can be paid again: %s", rerun.Message)
+	require.Len(t, received, 3)
+	records = attempts(order.Id)
+	require.Len(t, records, 4, "every attempt is kept separately")
+	assert.Equal(t, []int{4, 3, 2, 1}, []int{records[0].Seq, records[1].Seq, records[2].Seq, records[3].Seq})
+
+	stale := `{"trade_no":"` + order.TradeNo + `","attempt_id":` + strconv.Itoa(finished.Id) + `,"success":false,"step":"checkout","message":"declined"}`
+	assert.Equal(t, http.StatusOK, callback(stale, true))
+	stored, err = model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductFulfillmentRunning, stored.FulfillmentStatus, "an earlier attempt's result does not finish the new one")
+
+	failed := `{"trade_no":"` + order.TradeNo + `","attempt_id":` + strconv.Itoa(records[0].Id) +
+		`,"success":false,"step":"confirm_payment","message":"Checkout rejected the payment: declined","message_key":"Checkout rejected the payment: {{reason}}","params":{"reason":"declined"}}`
+	assert.Equal(t, http.StatusOK, callback(failed, true))
+	stored, err = model.GetProductOrder(order.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.ProductFulfillmentFailed, stored.FulfillmentStatus)
+	assert.Equal(t, "Checkout rejected the payment: declined", stored.FulfillmentMessage)
+	last := attempts(order.Id)[0]
+	assert.Equal(t, model.ProductFulfillmentFailed, last.Status)
+	assert.Equal(t, model.ProductFulfillmentStepConfirm, last.CurrentStep)
+	confirm := stepOf(last, model.ProductFulfillmentStepConfirm)
+	assert.Equal(t, model.ProductFulfillmentStepFailed, confirm.Status)
+	assert.Equal(t, "Checkout rejected the payment: {{reason}}", confirm.Message)
+	assert.Equal(t, model.ProductFulfillmentStepPending, stepOf(last, model.ProductFulfillmentStepComplete).Status, "steps after the failure did not run")
+	assert.NotEmpty(t, last.Events)
 }
 
 func TestVerifyProductFulfillerSignature(t *testing.T) {
