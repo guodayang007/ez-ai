@@ -1256,6 +1256,7 @@
     "ChatGPT Subscription (Codex)": "ChatGPT Subscription (Codex)",
     "chatgpt.com {{path}} returned HTTP {{status}} without JSON.": "chatgpt.com {{path}} trả về HTTP {{status}} không phải JSON.",
     "chatgpt.com {{path}} returned HTTP {{status}}: {{detail}}": "chatgpt.com {{path}} trả về HTTP {{status}}: {{detail}}",
+    "chatgpt.com {{path}} refused the request as unusual activity, so nothing was charged. The browser exit IP is usually the cause: set a residential browser proxy in the billing country in the ez-ai Product Fulfillment settings, then wait a while before retrying.": "chatgpt.com {{path}} đã từ chối yêu cầu vì hoạt động bất thường, chưa bị trừ tiền. Nguyên nhân thường là IP đầu ra của trình duyệt: hãy đặt proxy dân cư ở quốc gia thanh toán làm proxy trình duyệt trong cài đặt thực hiện tự động của ez-ai, rồi đợi một lúc trước khi thử lại.",
     "chatgpt.com blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.": "chatgpt.com đã chặn yêu cầu bằng bước kiểm tra trình duyệt; hãy đặt proxy khác trong cài đặt kích hoạt của ez-ai hoặc thử lại sau.",
     "chatgpt.com did not return a checkout link (fields: {{fields}}). Check that \"{{plan}}\" is a valid plan code.": "chatgpt.com không trả về liên kết thanh toán (trường: {{fields}}). Hãy kiểm tra \"{{plan}}\" có phải mã gói hợp lệ.",
     "Check": "Kiểm tra",

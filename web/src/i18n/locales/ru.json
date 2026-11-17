@@ -1256,6 +1256,7 @@
     "ChatGPT Subscription (Codex)": "ChatGPT Subscription (Codex)",
     "chatgpt.com {{path}} returned HTTP {{status}} without JSON.": "chatgpt.com {{path}} вернул HTTP {{status}} без JSON.",
     "chatgpt.com {{path}} returned HTTP {{status}}: {{detail}}": "chatgpt.com {{path}} вернул HTTP {{status}}: {{detail}}",
+    "chatgpt.com {{path}} refused the request as unusual activity, so nothing was charged. The browser exit IP is usually the cause: set a residential browser proxy in the billing country in the ez-ai Product Fulfillment settings, then wait a while before retrying.": "chatgpt.com {{path}} отклонил запрос как необычную активность, оплата не списана. Обычно причина — выходной IP браузера: укажите резидентный прокси в стране оплаты как прокси браузера в настройках автоматического выполнения ez-ai и подождите перед повторной попыткой.",
     "chatgpt.com blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.": "chatgpt.com заблокировал запрос проверкой браузера; укажите другой прокси в настройках выполнения ez-ai или повторите позже.",
     "chatgpt.com did not return a checkout link (fields: {{fields}}). Check that \"{{plan}}\" is a valid plan code.": "chatgpt.com не вернул ссылку на оплату (поля: {{fields}}). Проверьте, что «{{plan}}» — действительный код плана.",
     "Check": "Проверка",

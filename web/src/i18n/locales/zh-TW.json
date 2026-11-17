@@ -1256,6 +1256,7 @@
     "ChatGPT Subscription (Codex)": "ChatGPT Subscription (Codex)",
     "chatgpt.com {{path}} returned HTTP {{status}} without JSON.": "chatgpt.com {{path}} 回傳 HTTP {{status}}，內容不是 JSON。",
     "chatgpt.com {{path}} returned HTTP {{status}}: {{detail}}": "chatgpt.com {{path}} 回傳 HTTP {{status}}：{{detail}}",
+    "chatgpt.com {{path}} refused the request as unusual activity, so nothing was charged. The browser exit IP is usually the cause: set a residential browser proxy in the billing country in the ez-ai Product Fulfillment settings, then wait a while before retrying.": "chatgpt.com {{path}} 以「異常活動」為由拒絕了請求，未扣款。通常是瀏覽器出口 IP 導致：請在 ez-ai 商品自動開通設定中設定帳單國家的住宅代理作為瀏覽器代理，等待一段時間後再重試。",
     "chatgpt.com blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.": "chatgpt.com 用瀏覽器檢查攔截了請求；請在 ez-ai 商品自動開通設定中更換瀏覽器代理，或稍後重試。",
     "chatgpt.com did not return a checkout link (fields: {{fields}}). Check that \"{{plan}}\" is a valid plan code.": "chatgpt.com 沒有回傳結帳連結（欄位：{{fields}}）。請確認「{{plan}}」是有效的方案代碼。",
     "Check": "檢查",

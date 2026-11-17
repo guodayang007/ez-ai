@@ -1024,6 +1024,7 @@ export const STATIC_I18N_KEYS = [
   'chatgpt.com blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.',
   'chatgpt.com {{path}} returned HTTP {{status}} without JSON.',
   'chatgpt.com {{path}} returned HTTP {{status}}: {{detail}}',
+  'chatgpt.com {{path}} refused the request as unusual activity, so nothing was charged. The browser exit IP is usually the cause: set a residential browser proxy in the billing country in the ez-ai Product Fulfillment settings, then wait a while before retrying.',
   'chatgpt.com did not return a checkout link (fields: {{fields}}). Check that "{{plan}}" is a valid plan code.',
   'The checkout page did not show a card form ({{url}}).',
   'Checkout asks for an email, which means the session is not attached to the checkout.',

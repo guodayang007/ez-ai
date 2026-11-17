@@ -120,6 +120,16 @@ async function chatgptFetch(page, accessToken, path, init = {}) {
   }
   if (response.status >= 400) {
     const detail = typeof data?.detail === 'string' ? data.detail : JSON.stringify(data?.detail ?? data).slice(0, 300)
+    // OpenAI's risk check, seen on the checkout when the browser exits from a
+    // VPN or data-center address, or outside the billing country.
+    if (/unusual activity/i.test(detail)) {
+      throw new PurchaseError(
+        'chatgpt.com {{path}} refused the request as unusual activity, so nothing was charged. ' +
+          'The browser exit IP is usually the cause: set a residential browser proxy in the billing country ' +
+          'in the ez-ai Product Fulfillment settings, then wait a while before retrying.',
+        { path }
+      )
+    }
     throw new PurchaseError('chatgpt.com {{path}} returned HTTP {{status}}: {{detail}}', {
       path,
       status: String(response.status),
