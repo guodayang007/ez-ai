@@ -58,6 +58,7 @@ function health(
   return {
     status: 'ok',
     plans: ['chatgptplusplan'],
+    claude_plans: ['claude_pro', 'claude_max_5x', 'claude_max_20x'],
     service_url: 'http://127.0.0.1:3100',
     missing: [],
     ...overrides,

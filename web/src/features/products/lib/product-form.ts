@@ -51,6 +51,7 @@ export function getProductFormSchema(t: TFunction) {
       'json',
       'base64',
       'chatgpt_session',
+      'claude_cookie',
     ]),
     required: z.boolean(),
     placeholder: z.string(),

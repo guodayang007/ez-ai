@@ -23,6 +23,7 @@ import { PRODUCT_INPUT_MAX_LENGTH_DEFAULT } from '@/features/products/constants'
 import type { ProductInputField } from '@/features/products/types'
 
 import { parseChatGPTSession } from './chatgpt-session'
+import { parseClaudeCookie } from './claude-cookie'
 
 const BASE64_PATTERN = /^[A-Za-z0-9+/_-]*={0,2}$/
 
@@ -88,6 +89,12 @@ export function buildOrderInputsSchema(
         const session = parseChatGPTSession(value)
         if (!session.ok) {
           ctx.addIssue({ code: 'custom', message: t(session.errorKey) })
+        }
+      }
+      if (field.type === 'claude_cookie') {
+        const cookie = parseClaudeCookie(value)
+        if (!cookie.ok) {
+          ctx.addIssue({ code: 'custom', message: t(cookie.errorKey) })
         }
       }
     })

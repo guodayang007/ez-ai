@@ -43,6 +43,37 @@ export function isFulfillerReady(health: ProductFulfillerHealth): boolean {
   return health.status === 'ok' && health.plans.length > 0
 }
 
+/** A Claude order carries a Claude cookie; every other order is ChatGPT. */
+export function isClaudeOrder(order: ProductOrder): boolean {
+  return order.input_fields.some((field) => field.type === 'claude_cookie')
+}
+
+/** The plans the admin may buy for this order. */
+export function getOrderPlans(
+  order: ProductOrder,
+  health: ProductFulfillerHealth
+): string[] {
+  return isClaudeOrder(order) ? (health.claude_plans ?? []) : health.plans
+}
+
+/**
+ * The plan to preselect: the plan of the previous attempt, the only plan
+ * offered, or for Claude the plan named by the SKU (such as "Max 5x").
+ */
+export function getDefaultPlan(order: ProductOrder, offered: string[]): string {
+  if (order.fulfillment_plan && offered.includes(order.fulfillment_plan)) {
+    return order.fulfillment_plan
+  }
+  if (offered.length === 1) return offered[0]
+  if (!isClaudeOrder(order)) return ''
+  const sku = order.sku_name.toLowerCase()
+  let plan = ''
+  if (sku.includes('20x')) plan = 'claude_max_20x'
+  else if (sku.includes('5x')) plan = 'claude_max_5x'
+  else if (sku.includes('pro')) plan = 'claude_pro'
+  return offered.includes(plan) ? plan : ''
+}
+
 export type AttemptProgress = {
   /** The furthest step the attempt reached; null before any step ran. */
   current: ProductFulfillmentStepState | null

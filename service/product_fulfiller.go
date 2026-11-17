@@ -50,6 +50,18 @@ var (
 	ErrProductFulfillerUnauthorized = errors.New("product fulfiller rejected the signature")
 )
 
+// Providers the fulfiller can buy a subscription from. The order's input
+// fields decide which one runs: a ChatGPT session or a Claude cookie.
+const (
+	ProductFulfillmentProviderChatGPT = "chatgpt"
+	ProductFulfillmentProviderClaude  = "claude"
+)
+
+// ProductFulfillerClaudePlans are the Claude plans the fulfiller knows how to
+// buy (services/dogpay-fulfiller/src/claude.mjs). Unlike ChatGPT plan codes
+// they are fixed by the fulfiller, so they are not part of the settings.
+var ProductFulfillerClaudePlans = []string{"claude_pro", "claude_max_5x", "claude_max_20x"}
+
 var (
 	productFulfillerPlanPattern       = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
 	productFulfillerCardNumberPattern = regexp.MustCompile(`^\d{12,19}$`)
@@ -308,9 +320,13 @@ type ProductFulfillmentJob struct {
 	TradeNo string `json:"trade_no"`
 	// AttemptId identifies the payment record; the fulfiller sends it back
 	// with every progress event and the result.
-	AttemptId    int                     `json:"attempt_id"`
-	Plan         string                  `json:"plan"`
-	AccessToken  string                  `json:"access_token"`
+	AttemptId int    `json:"attempt_id"`
+	Provider  string `json:"provider"`
+	Plan      string `json:"plan"`
+	// AccessToken signs in to ChatGPT; Cookie (a Cookie header with the
+	// sessionKey) signs in to Claude.
+	AccessToken  string                  `json:"access_token,omitempty"`
+	Cookie       string                  `json:"cookie,omitempty"`
 	CallbackURL  string                  `json:"callback_url"`
 	Card         ProductFulfillerCard    `json:"card"`
 	Billing      ProductFulfillerBilling `json:"billing"`

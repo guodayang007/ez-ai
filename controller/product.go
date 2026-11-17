@@ -41,6 +41,7 @@ var (
 		model.ProductInputJSON:           true,
 		model.ProductInputBase64:         true,
 		model.ProductInputChatGPTSession: true,
+		model.ProductInputClaudeCookie:   true,
 	}
 	// A ChatGPT access token is a JWT: three base64url segments.
 	chatGPTAccessTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
@@ -169,6 +170,11 @@ func validateProductOrderInputs(fields []model.ProductInputField, submitted map[
 			if msg := validateChatGPTSession(value, time.Now()); msg != "" {
 				return nil, msg, nil
 			}
+		case model.ProductInputClaudeCookie:
+			value = model.NormalizeClaudeCookie(value)
+			if value == "" {
+				return nil, productClaudeCookieInvalid, nil
+			}
 		}
 		totalLength += len(value)
 		if totalLength > productInputsTotalMaxLength {
@@ -178,6 +184,8 @@ func validateProductOrderInputs(fields []model.ProductInputField, submitted map[
 	}
 	return inputs, "", nil
 }
+
+const productClaudeCookieInvalid = "The cookie must contain the sessionKey copied from claude.ai"
 
 // validateChatGPTSession checks the JSON copied from
 // chatgpt.com/api/auth/session and returns the English message key of the
@@ -528,7 +536,7 @@ type productExecutePaymentRequest struct {
 
 // AdminExecuteProductOrderPayment starts the automatic purchase of an order
 // in any status: the fulfiller service pays for the plan the admin chose with the
-// DogPay card on the buyer's ChatGPT account and reports back through
+// DogPay card on the buyer's ChatGPT or Claude account and reports back through
 // ProductFulfillmentCallback. Every click that reaches a valid order is kept
 // as a payment record with its steps, including clicks rejected by the checks
 // below.
@@ -570,16 +578,28 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 	// The checks below leave the order as it was; only the record shows them.
 	failCheck := ""
 	config, err := service.LoadProductFulfillerConfig()
-	accessToken := order.ChatGPTAccessToken()
+	job := service.ProductFulfillmentJob{
+		TradeNo:     order.TradeNo,
+		AttemptId:   attempt.Id,
+		Plan:        req.Plan,
+		AccessToken: order.ChatGPTAccessToken(),
+		Cookie:      order.ClaudeCookie(),
+	}
+	plans := config.Plans
+	job.Provider = service.ProductFulfillmentProviderChatGPT
+	if job.Cookie != "" {
+		plans = service.ProductFulfillerClaudePlans
+		job.Provider = service.ProductFulfillmentProviderClaude
+	}
 	switch {
 	case err != nil || !config.Enabled():
 		failCheck = "Automatic fulfillment is not configured"
-	case accessToken == "":
-		failCheck = "This order has no ChatGPT session"
-	case !slices.Contains(config.Plans, req.Plan):
+	case job.AccessToken == "" && job.Cookie == "":
+		failCheck = "This order has no ChatGPT session or Claude cookie"
+	case !slices.Contains(plans, req.Plan):
 		failCheck = "The fulfillment service does not offer this plan"
 	}
-	if failCheck == "" {
+	if failCheck == "" && job.Provider == service.ProductFulfillmentProviderChatGPT {
 		for _, field := range order.InputFields {
 			if field.Type != model.ProductInputChatGPTSession {
 				continue
@@ -612,12 +632,7 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 		"The order and the fulfillment settings are ready; buying {{plan}}", map[string]string{"plan": req.Plan}, "")
 	recordProductFulfillmentEvent(attempt, model.ProductFulfillmentStepSubmit, model.ProductFulfillmentStepRunning,
 		"Sending the job to the fulfillment service at {{url}}", map[string]string{"url": config.URL}, "")
-	submitErr := service.SubmitProductFulfillment(config, service.ProductFulfillmentJob{
-		TradeNo:     order.TradeNo,
-		AttemptId:   attempt.Id,
-		Plan:        req.Plan,
-		AccessToken: accessToken,
-	})
+	submitErr := service.SubmitProductFulfillment(config, job)
 	if submitErr != nil {
 		common.SysError(common.LogText("failed to submit product order %s to fulfiller: %s", order.TradeNo, submitErr.Error()))
 		if err := model.FinishProductOrderFulfillment(order.TradeNo, attempt.Id, false, submitErr.Error(), ""); err != nil {

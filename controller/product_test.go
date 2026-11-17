@@ -116,6 +116,27 @@ func TestValidateChatGPTSession(t *testing.T) {
 	}
 }
 
+func TestNormalizeClaudeCookie(t *testing.T) {
+	const key = "sk-ant-sid01-AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-xyzAA"
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "bare session key", value: "  " + key + "\n", want: "sessionKey=" + key},
+		{name: "cookie header keeps other cookies and drops cloudflare ones", value: "Cookie: lastActiveOrg=org-1; cf_clearance=abc; sessionKey=" + key + "; __cf_bm=x", want: "lastActiveOrg=org-1; sessionKey=" + key},
+		{name: "malformed pairs are skipped", value: "=x; bad name=1; quoted=\"a b\"; sessionKey=" + key, want: "sessionKey=" + key},
+		{name: "header without a session key", value: "lastActiveOrg=org-1; cf_clearance=abc", want: ""},
+		{name: "session key of another format", value: "sessionKey=abc123", want: ""},
+		{name: "bare value that is not a session key", value: "hello", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, model.NormalizeClaudeCookie(tt.value))
+		})
+	}
+}
+
 func TestProductOrderLifecycle(t *testing.T) {
 	setupProductTestDB(t)
 	product := &model.Product{
@@ -186,23 +207,52 @@ func TestSeedDefaultProductsRunsOnce(t *testing.T) {
 
 	products, err := model.ListProducts(false)
 	require.NoError(t, err)
-	require.Len(t, products, 1)
-	assert.Equal(t, "ChatGPT", products[0].Title)
-	require.Len(t, products[0].InputFields, 1)
-	assert.Equal(t, model.ProductInputChatGPTSession, products[0].InputFields[0].Type, "the default ChatGPT product asks for the session")
-	require.Len(t, products[0].Skus, 5, "only 1-month options are seeded")
+	require.Len(t, products, 2)
+	byTitle := map[string]model.Product{}
+	for _, product := range products {
+		byTitle[product.Title] = product
+	}
+	chatgpt, claude := byTitle["ChatGPT"], byTitle["Claude"]
+	require.Len(t, chatgpt.InputFields, 1)
+	assert.Equal(t, model.ProductInputChatGPTSession, chatgpt.InputFields[0].Type, "the default ChatGPT product asks for the session")
+	require.Len(t, chatgpt.Skus, 5, "only 1-month options are seeded")
+	require.Len(t, claude.InputFields, 1)
+	assert.Equal(t, model.ProductInputClaudeCookie, claude.InputFields[0].Type, "the default Claude product asks for the cookie")
+	assert.True(t, claude.InputFields[0].Required)
+	require.Len(t, claude.Skus, 3)
 	prices := map[string][2]float64{}
-	for _, sku := range products[0].Skus {
+	for _, sku := range append(chatgpt.Skus, claude.Skus...) {
 		prices[sku.Name] = [2]float64{sku.PriceAmount, sku.OriginalPrice}
 	}
 	assert.Equal(t, [2]float64{42.99, 45.98}, prices["Plus · 1 个月"])
 	assert.Equal(t, [2]float64{1020.99, 1039.98}, prices["Pro 500 · 1 个月"])
+	assert.Equal(t, [2]float64{42.99, 45.98}, prices["Pro · 1 个月"])
+	assert.Equal(t, [2]float64{405.99, 411.98}, prices["Max 20x · 1 个月"])
 
-	require.NoError(t, model.DeleteProduct(products[0].Id))
+	for _, product := range products {
+		require.NoError(t, model.DeleteProduct(product.Id))
+	}
 	require.NoError(t, model.SeedDefaultProducts())
 	products, err = model.ListProducts(false)
 	require.NoError(t, err)
 	assert.Empty(t, products, "defaults are not re-added after an admin deletes them")
+}
+
+func TestSeedDefaultProductsAddsClaudeToAnExistingCatalog(t *testing.T) {
+	setupProductTestDB(t)
+	// A database seeded before the Claude product existed.
+	require.NoError(t, model.DB.Create(&model.Option{Key: "ProductDefaultsSeeded", Value: "true"}).Error)
+	require.NoError(t, model.SaveProduct(&model.Product{Title: "Gemini", Enabled: true, Skus: []model.ProductSku{{Name: "monthly", Currency: "USD", Enabled: true}}}))
+
+	require.NoError(t, model.SeedDefaultProducts())
+	require.NoError(t, model.SeedDefaultProducts())
+	products, err := model.ListProducts(false)
+	require.NoError(t, err)
+	titles := []string{}
+	for _, product := range products {
+		titles = append(titles, product.Title)
+	}
+	assert.ElementsMatch(t, []string{"Gemini", "Claude"}, titles, "Claude is added once; ChatGPT, already offered, is not")
 }
 
 func TestNormalizeProductRejectsOriginalPriceBelowPrice(t *testing.T) {
@@ -257,13 +307,13 @@ func TestProductFulfillmentStatusExplainsSetupProblems(t *testing.T) {
 		config *service.ProductFulfillerConfig
 		want   string
 	}{
-		{name: "no encryption key", want: `{"status":"key_missing","plans":[],"service_url":"","missing":[]}`},
-		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"service_url":"","missing":["url","secret","plans","card_number","card_expiry","card_cvc","card_holder"]}`},
-		{name: "card missing", key: productTestEncryptionKey, config: &service.ProductFulfillerConfig{URL: fulfiller.URL, Secret: secret, Plans: []string{"chatgptplusplan"}}, want: `{"status":"not_configured","plans":[],"service_url":"` + fulfiller.URL + `","missing":["card_number","card_expiry","card_cvc","card_holder"]}`},
-		{name: "saved under another key", key: "another-config-encryption-key-0123456789", config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"config_unreadable","plans":[],"service_url":"","missing":[]}`},
-		{name: "service not running", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(stoppedURL, secret)), want: `{"status":"unreachable","plans":[],"service_url":"` + stoppedURL + `","missing":[]}`},
-		{name: "secret differs from the service", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, strings.Repeat("x", 32))), want: `{"status":"unauthorized","plans":[],"service_url":"` + fulfiller.URL + `","missing":[]}`},
-		{name: "ready", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"ok","plans":["chatgptplusplan"],"service_url":"` + fulfiller.URL + `","missing":[]}`},
+		{name: "no encryption key", want: `{"status":"key_missing","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
+		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"","missing":["url","secret","plans","card_number","card_expiry","card_cvc","card_holder"]}`},
+		{name: "card missing", key: productTestEncryptionKey, config: &service.ProductFulfillerConfig{URL: fulfiller.URL, Secret: secret, Plans: []string{"chatgptplusplan"}}, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":["card_number","card_expiry","card_cvc","card_holder"]}`},
+		{name: "saved under another key", key: "another-config-encryption-key-0123456789", config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"config_unreadable","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
+		{name: "service not running", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(stoppedURL, secret)), want: `{"status":"unreachable","plans":[],"claude_plans":[],"service_url":"` + stoppedURL + `","missing":[]}`},
+		{name: "secret differs from the service", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, strings.Repeat("x", 32))), want: `{"status":"unauthorized","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":[]}`},
+		{name: "ready", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"ok","plans":["chatgptplusplan"],"claude_plans":["claude_pro","claude_max_5x","claude_max_20x"],"service_url":"` + fulfiller.URL + `","missing":[]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -502,6 +552,7 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, service.ProductFulfillmentJob{
 		TradeNo:     order.TradeNo,
 		AttemptId:   running.Id,
+		Provider:    service.ProductFulfillmentProviderChatGPT,
 		Plan:        "chatgptplusplan",
 		AccessToken: token,
 		CallbackURL: "https://ez-ai.test/api/product/fulfillment/callback",
@@ -583,6 +634,40 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, "Checkout rejected the payment: {{reason}}", confirm.Message)
 	assert.Equal(t, model.ProductFulfillmentStepPending, stepOf(last, model.ProductFulfillmentStepComplete).Status, "steps after the failure did not run")
 	assert.NotEmpty(t, last.Events)
+
+	// A Claude order is paid with the buyer's cookie and a Claude plan.
+	const sessionKey = "sk-ant-sid01-AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-xyzAA"
+	claude := &model.Product{
+		Title:       "Claude",
+		Enabled:     true,
+		InputFields: []model.ProductInputField{{Key: "cookie", Label: "Claude Cookie", Type: model.ProductInputClaudeCookie, Required: true}},
+		Skus:        []model.ProductSku{{Name: "Max 5x", PriceAmount: 203.99, Currency: "USD", Enabled: true}},
+	}
+	msg, _ = normalizeProduct(claude)
+	require.Empty(t, msg)
+	require.NoError(t, model.SaveProduct(claude))
+	claudeOrderBody := func(cookie string) string {
+		inputs, err := common.Marshal(map[string]string{"cookie": cookie})
+		require.NoError(t, err)
+		return `{"sku_id":` + strconv.Itoa(claude.Skus[0].Id) + `,"inputs":` + string(inputs) + `}`
+	}
+	badCookie := callProductHandler(t, CreateProductOrder, 7, 0, claudeOrderBody("lastActiveOrg=org-1"))
+	assert.Equal(t, "The cookie must contain the sessionKey copied from claude.ai", badCookie.Message)
+	placed := callProductHandler(t, CreateProductOrder, 7, 0, claudeOrderBody("cf_clearance=abc; sessionKey="+sessionKey+"; lastActiveOrg=org-1"))
+	require.True(t, placed.Success, placed.Message)
+	var claudeOrder model.ProductOrder
+	require.NoError(t, common.Unmarshal(placed.Data, &claudeOrder))
+	assert.NotContains(t, claudeOrder.Inputs["cookie"], sessionKey, "the buyer sees the cookie masked")
+
+	chatgptPlan := callProductHandler(t, AdminExecuteProductOrderPayment, 1, claudeOrder.Id, payPlus)
+	assert.Equal(t, "The fulfillment service does not offer this plan", chatgptPlan.Message, "a Claude order only takes Claude plans")
+	paid := callProductHandler(t, AdminExecuteProductOrderPayment, 1, claudeOrder.Id, `{"plan":"claude_max_5x"}`)
+	require.True(t, paid.Success, paid.Message)
+	claudeJob := received[len(received)-1]
+	assert.Equal(t, service.ProductFulfillmentProviderClaude, claudeJob.Provider)
+	assert.Equal(t, "claude_max_5x", claudeJob.Plan)
+	assert.Equal(t, "sessionKey="+sessionKey+"; lastActiveOrg=org-1", claudeJob.Cookie, "the cookie is sent without Cloudflare cookies")
+	assert.Empty(t, claudeJob.AccessToken)
 }
 
 func TestVerifyProductFulfillerSignature(t *testing.T) {

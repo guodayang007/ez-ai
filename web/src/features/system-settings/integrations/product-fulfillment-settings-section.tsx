@@ -177,7 +177,9 @@ export function ProductFulfillmentSettingsSection() {
           <AlertDescription>
             {t('Connected to {{url}}. Plans offered: {{plans}}', {
               url: health.service_url,
-              plans: health.plans.join(', '),
+              plans: [...health.plans, ...(health.claude_plans ?? [])].join(
+                ', '
+              ),
             })}
           </AlertDescription>
         </Alert>

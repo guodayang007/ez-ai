@@ -54,7 +54,8 @@ type SubscribeCheckoutProps = {
 
 /**
  * In-page checkout: choose a plan, verify the account, then create the order.
- * The order can only be placed after the ChatGPT session passes verification.
+ * The order can only be placed after the ChatGPT session or Claude cookie
+ * passes verification.
  */
 export function SubscribeCheckout(props: SubscribeCheckoutProps) {
   const { t } = useTranslation()
@@ -67,7 +68,12 @@ export function SubscribeCheckout(props: SubscribeCheckoutProps) {
   const sku =
     product.skus.find((item) => item.id === props.skuId) ?? product.skus[0]
   const fields = useMemo(() => product.input_fields ?? [], [product])
-  const sessionField = fields.find((field) => field.type === 'chatgpt_session')
+  // The ChatGPT session or Claude cookie that names the account to upgrade.
+  const sessionField = fields.find(
+    (field) =>
+      field.type === 'chatgpt_session' || field.type === 'claude_cookie'
+  )
+  const isClaude = sessionField?.type === 'claude_cookie'
   const otherFields = fields.filter((field) => field !== sessionField)
 
   const schema = useMemo(() => buildOrderInputsSchema(fields, t), [fields, t])
@@ -119,7 +125,15 @@ export function SubscribeCheckout(props: SubscribeCheckoutProps) {
     })
   }
 
-  let action: { label: string; disabled?: boolean; hint?: string; run: () => void }
+  const verifyHint = isClaude
+    ? t('Verify your cookie to place the order')
+    : t('Verify your session to place the order')
+  let action: {
+    label: string
+    disabled?: boolean
+    hint?: string
+    run: () => void
+  }
   if (props.step === 'plan') {
     action = {
       label: t('Next: {{step}}', { step: accountStepLabel }),
@@ -133,7 +147,7 @@ export function SubscribeCheckout(props: SubscribeCheckoutProps) {
       disabled: !sessionVerified,
       hint: sessionVerified
         ? t('You can track the order in My Orders')
-        : t('Verify your session to place the order'),
+        : verifyHint,
       run: () => void form.handleSubmit((values) => mutation.mutate(values))(),
     }
   }

@@ -23,6 +23,7 @@ export type ProductInputType =
   | 'json'
   | 'base64'
   | 'chatgpt_session'
+  | 'claude_cookie'
 
 export type ProductInputField = {
   key: string
@@ -182,8 +183,10 @@ export type ProductFulfillerField =
 
 export type ProductFulfillerHealth = {
   status: ProductFulfillerState
-  /** The plans the admin may buy; empty unless the status is ok. */
+  /** The ChatGPT plans the admin may buy; empty unless the status is ok. */
   plans: string[]
+  /** The Claude plans the admin may buy; empty unless the status is ok. */
+  claude_plans: string[]
   service_url: string
   missing: ProductFulfillerField[]
 }

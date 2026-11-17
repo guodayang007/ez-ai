@@ -32,18 +32,69 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import type { ProductInputField } from '@/features/products/types'
 import { OrderInputControl } from '@/features/store/components/order-input-control'
+import { parseChatGPTSession } from '@/features/store/lib/chatgpt-session'
 import {
-  type ChatGPTSessionResult,
-  parseChatGPTSession,
-} from '@/features/store/lib/chatgpt-session'
+  maskSessionKey,
+  parseClaudeCookie,
+} from '@/features/store/lib/claude-cookie'
 import type { OrderFormValues } from '@/features/store/lib/order-form'
 import { toIntlLocale } from '@/i18n/languages'
 
+import { ClaudeCookieGuide } from './claude-cookie-guide'
 import { SessionGuide } from './session-guide'
 
-export type VerifiedSession = Extract<ChatGPTSessionResult, { ok: true }> & {
+/** The account a ChatGPT session or a Claude cookie belongs to. */
+export type VerifiedSession = {
   /** The exact text that passed verification; editing it voids the result. */
   value: string
+  email: string
+  plan: string
+  expiresAt: Date | null
+  /** Claude only: the masked session key and the last used organization. */
+  sessionKey: string
+  organization: string
+}
+
+type VerifyResult =
+  | { ok: true; verified: VerifiedSession }
+  | { ok: false; errorKey: string }
+
+/**
+ * Checks the pasted session or cookie of an account field. A Claude cookie
+ * is replaced by the normalized form the server stores.
+ */
+function verifyAccountValue(
+  field: ProductInputField,
+  value: string
+): VerifyResult {
+  if (field.type === 'claude_cookie') {
+    const cookie = parseClaudeCookie(value)
+    if (!cookie.ok) return cookie
+    return {
+      ok: true,
+      verified: {
+        value: cookie.cookie,
+        email: '',
+        plan: '',
+        expiresAt: null,
+        sessionKey: maskSessionKey(cookie.sessionKey),
+        organization: cookie.organization,
+      },
+    }
+  }
+  const session = parseChatGPTSession(value)
+  if (!session.ok) return session
+  return {
+    ok: true,
+    verified: {
+      value,
+      email: session.email,
+      plan: session.plan,
+      expiresAt: session.expiresAt,
+      sessionKey: '',
+      organization: '',
+    },
+  }
 }
 
 type AccountStepProps = {
@@ -56,6 +107,7 @@ type AccountStepProps = {
 
 function VerifiedSessionCard(props: {
   verified: VerifiedSession
+  isClaude: boolean
   onReset: () => void
 }) {
   const { t, i18n } = useTranslation()
@@ -67,6 +119,8 @@ function VerifiedSessionCard(props: {
       label: t('Session expires'),
       value: props.verified.expiresAt?.toLocaleString(locale) ?? '',
     },
+    { label: t('Session key'), value: props.verified.sessionKey },
+    { label: t('Organization'), value: props.verified.organization },
   ].filter((row) => row.value !== '')
 
   return (
@@ -77,7 +131,7 @@ function VerifiedSessionCard(props: {
       <div className='flex items-start justify-between gap-3'>
         <div className='flex items-center gap-2 text-sm font-semibold text-emerald-700 dark:text-emerald-400'>
           <CircleCheck className='size-5' aria-hidden='true' />
-          {t('Session verified')}
+          {props.isClaude ? t('Cookie verified') : t('Session verified')}
         </div>
         <Button variant='ghost' size='sm' onClick={props.onReset}>
           {t('Change')}
@@ -97,27 +151,35 @@ function VerifiedSessionCard(props: {
   )
 }
 
-/** Second checkout step: verify the ChatGPT session and fill other fields. */
+/**
+ * Second checkout step: verify the ChatGPT session or Claude cookie and fill
+ * other fields.
+ */
 export function AccountStep(props: AccountStepProps) {
   const { t } = useTranslation()
   const sessionField = props.sessionField
   const sessionName = sessionField
     ? (`inputs.${sessionField.key}` as const)
     : undefined
+  const isClaude = sessionField?.type === 'claude_cookie'
 
   const verify = () => {
-    if (!sessionName) return
+    if (!sessionField || !sessionName) return
     const value = props.form.getValues(sessionName).trim()
-    const result = parseChatGPTSession(value)
+    const result = verifyAccountValue(sessionField, value)
     if (!result.ok) {
       props.onVerifiedChange(null)
       props.form.setError(sessionName, { message: t(result.errorKey) })
       return
     }
     props.form.clearErrors(sessionName)
-    props.form.setValue(sessionName, value)
-    props.onVerifiedChange({ ...result, value })
+    props.form.setValue(sessionName, result.verified.value)
+    props.onVerifiedChange(result.verified)
   }
+
+  let placeholder = '{"user":{...},"expires":"...","accessToken":"..."}'
+  if (isClaude) placeholder = 'sessionKey=sk-ant-sid01-...'
+  if (sessionField?.placeholder) placeholder = sessionField.placeholder
 
   return (
     <div className='space-y-6'>
@@ -125,20 +187,27 @@ export function AccountStep(props: AccountStepProps) {
         <section className='bg-card space-y-6 rounded-2xl border p-5 sm:p-6'>
           <div className='space-y-1'>
             <h2 className='text-lg font-semibold'>
-              {t('Verify your ChatGPT account')}
+              {isClaude
+                ? t('Verify your Claude account')
+                : t('Verify your ChatGPT account')}
             </h2>
             <p className='text-muted-foreground text-sm'>
-              {t(
-                'We use the session to identify the account to upgrade. It takes about a minute.'
-              )}
+              {isClaude
+                ? t(
+                    'We use the cookie to identify the account to upgrade. It takes about a minute.'
+                  )
+                : t(
+                    'We use the session to identify the account to upgrade. It takes about a minute.'
+                  )}
             </p>
           </div>
 
-          <SessionGuide />
+          {isClaude ? <ClaudeCookieGuide /> : <SessionGuide />}
 
           {props.verified ? (
             <VerifiedSessionCard
               verified={props.verified}
+              isClaude={isClaude}
               onReset={() => props.onVerifiedChange(null)}
             />
           ) : (
@@ -161,15 +230,14 @@ export function AccountStep(props: AccountStepProps) {
                       rows={6}
                       spellCheck={false}
                       autoComplete='off'
-                      placeholder={
-                        sessionField.placeholder ||
-                        '{"user":{...},"expires":"...","accessToken":"..."}'
-                      }
+                      placeholder={placeholder}
                       className='min-h-36 font-mono text-xs'
                     />
                   </FormControl>
                   {sessionField.description && (
-                    <FormDescription>{sessionField.description}</FormDescription>
+                    <FormDescription>
+                      {sessionField.description}
+                    </FormDescription>
                   )}
                   <FormMessage />
                   <div className='flex justify-end'>
@@ -191,9 +259,13 @@ export function AccountStep(props: AccountStepProps) {
               className='mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400'
               aria-hidden='true'
             />
-            {t(
-              'Your session is only used to activate this subscription and is hidden after the order is placed. Do not share it with anyone else.'
-            )}
+            {isClaude
+              ? t(
+                  'Your cookie is only used to activate this subscription and is hidden after the order is placed. Do not share it with anyone else.'
+                )
+              : t(
+                  'Your session is only used to activate this subscription and is hidden after the order is placed. Do not share it with anyone else.'
+                )}
           </p>
         </section>
       )}

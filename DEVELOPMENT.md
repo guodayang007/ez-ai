@@ -148,9 +148,11 @@ npm test                             # 服务自身的单元测试
 
 开通服务不可用时，“执行支付”弹窗和设置页会说明原因（未设置加密密钥、配置无法解密、缺少哪些项、服务未启动、密钥不一致），并给出“前往开通设置”或“重新检查”。
 
+Claude 商品：启动时自动录入一次“Claude”商品（Pro / Max 5x / Max 20x，各 1 个月；options 表 `ProductClaudeSeeded` 标记已录入，删除后不会再加回）。买家下单必须填写 claude.ai 的 Cookie（输入类型 `claude_cookie`）：可以是 `sessionKey` 的值（`sk-ant-sid…`），也可以是整段 Cookie 请求头；服务端只保留合法的键值对并去掉 Cloudflare 的 Cookie，没有有效 sessionKey 时拒绝下单。对 Claude 订单“执行支付”时，套餐固定为 `claude_pro`、`claude_max_5x`、`claude_max_20x`（由开通服务 `src/claude.mjs` 定义，不在设置里配置，弹窗按规格名预选）；开通服务把 Cookie 写入浏览器，用 `/api/organizations` 检查现有订阅，打开 `claude.ai/upgrade/pro` 或 `/upgrade/max` 选档位后用同一张 DogPay 卡付款。claude.ai 的页面和接口随时可能变化，失败时支付记录会写明停在哪一步。
+
 使用条件：
 
-- 点“执行支付”时在弹窗里选择要购买的套餐，可选项就是设置里的“可购买套餐”。
+- 点“执行支付”时在弹窗里选择要购买的套餐：ChatGPT 订单的可选项是设置里的“可购买套餐”，Claude 订单是上面三个固定套餐。设置里的 ChatGPT 套餐仍是必填项。
 - 执行支付不校验订单状态，任何状态的订单都可以执行；只有该订单的自动支付正在进行中时不能重复发起，避免重复扣卡。
 - 开通前会检查账号是否已有订阅，已有则不扣款；遇到验证码或 3-D Secure 时停止，需要人工完成。
 

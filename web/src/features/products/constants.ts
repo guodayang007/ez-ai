@@ -47,11 +47,12 @@ export const PRODUCT_INPUT_TYPES: Array<{
   { value: 'json', labelKey: 'JSON' },
   { value: 'base64', labelKey: 'Base64' },
   { value: 'chatgpt_session', labelKey: 'ChatGPT Session' },
+  { value: 'claude_cookie', labelKey: 'Claude Cookie' },
 ]
 
 // Input types whose values the server masks before showing them to the buyer.
 export const PRODUCT_MASKED_INPUT_TYPES: ReadonlySet<ProductInputType> =
-  new Set(['secret', 'chatgpt_session'])
+  new Set(['secret', 'chatgpt_session', 'claude_cookie'])
 
 export const PRODUCT_ORDER_STATUSES: Record<
   ProductOrderStatus,

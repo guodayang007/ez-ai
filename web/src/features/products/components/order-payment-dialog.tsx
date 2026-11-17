@@ -45,6 +45,8 @@ import { formatProductPrice } from '../lib/format'
 import {
   canExecutePayment,
   FULFILLER_SETTINGS_SECTION,
+  getDefaultPlan,
+  getOrderPlans,
   isFulfillerReady,
 } from '../lib/fulfillment'
 import type { ProductOrder } from '../types'
@@ -86,19 +88,14 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
   })
   const health = healthQuery.data
   const ready = health !== undefined && isFulfillerReady(health)
-  const plans = ready ? health.plans : []
+  // A Claude order is bought with a Claude plan, any other with a ChatGPT one.
+  const plans = ready && order ? getOrderPlans(order, health) : []
 
-  // A retry starts from the plan of the failed attempt; a single offered plan
-  // is chosen for the admin.
   useEffect(() => {
-    const offered = healthQuery.data?.plans ?? []
-    if (order?.fulfillment_plan && offered.includes(order.fulfillment_plan)) {
-      setPlan(order.fulfillment_plan)
-    } else if (offered.length === 1) {
-      setPlan(offered[0])
-    } else {
-      setPlan('')
-    }
+    const data = healthQuery.data
+    setPlan(
+      order && data ? getDefaultPlan(order, getOrderPlans(order, data)) : ''
+    )
   }, [order, healthQuery.data])
 
   const mutation = useMutation({

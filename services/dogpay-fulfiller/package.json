@@ -2,7 +2,7 @@
   "name": "dogpay-fulfiller",
   "private": true,
   "type": "module",
-  "description": "Buys ez-ai product orders' ChatGPT subscriptions with the DogPay card",
+  "description": "Buys ez-ai product orders' ChatGPT and Claude subscriptions with the DogPay card",
   "engines": {
     "node": ">=22"
   },

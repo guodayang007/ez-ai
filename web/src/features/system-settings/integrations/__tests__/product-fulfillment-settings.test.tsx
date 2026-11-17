@@ -102,6 +102,7 @@ describe('product fulfillment settings', () => {
     const update = mockServer(savedView, {
       status: 'ok',
       plans: ['chatgptplusplan'],
+      claude_plans: ['claude_pro'],
       service_url: savedView.url,
       missing: [],
     })
@@ -135,7 +136,13 @@ describe('product fulfillment settings', () => {
         has_secret: false,
         card_last4: '',
       },
-      { status: 'key_missing', plans: [], service_url: '', missing: [] }
+      {
+        status: 'key_missing',
+        plans: [],
+        claude_plans: [],
+        service_url: '',
+        missing: [],
+      }
     )
     renderSection()
 

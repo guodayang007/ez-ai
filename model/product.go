@@ -3,6 +3,8 @@ package model
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -19,6 +21,9 @@ const (
 	// ProductInputChatGPTSession is the JSON the buyer copies from
 	// chatgpt.com/api/auth/session; it carries the account access token.
 	ProductInputChatGPTSession = "chatgpt_session"
+	// ProductInputClaudeCookie is the claude.ai Cookie the buyer copies from
+	// the browser; its sessionKey signs the fulfiller in to the account.
+	ProductInputClaudeCookie = "claude_cookie"
 )
 
 // Product order lifecycle. Payment is not integrated yet, so a new order
@@ -175,7 +180,8 @@ func (o *ProductOrder) decodeJSONColumns() error {
 	return nil
 }
 
-// RedactForBuyer hides secret values, including ChatGPT sessions, and the
+// RedactForBuyer hides secret values, including ChatGPT sessions and Claude
+// cookies, and the
 // admin-only fulfillment details before an order is shown to its buyer.
 func (o *ProductOrder) RedactForBuyer() {
 	o.FulfillmentPlan = ""
@@ -184,7 +190,7 @@ func (o *ProductOrder) RedactForBuyer() {
 	o.FulfillmentStartedAt = 0
 	o.FulfillmentAttemptId = 0
 	for _, field := range o.InputFields {
-		if field.Type != ProductInputSecret && field.Type != ProductInputChatGPTSession {
+		if field.Type != ProductInputSecret && field.Type != ProductInputChatGPTSession && field.Type != ProductInputClaudeCookie {
 			continue
 		}
 		value := o.Inputs[field.Key]
@@ -547,6 +553,70 @@ func (o *ProductOrder) ChatGPTAccessToken() string {
 		}
 	}
 	return ""
+}
+
+// ClaudeCookie returns the normalized Cookie header from the order's Claude
+// cookie input, or "" when the order has none.
+func (o *ProductOrder) ClaudeCookie() string {
+	for _, field := range o.InputFields {
+		if field.Type != ProductInputClaudeCookie {
+			continue
+		}
+		if cookie := NormalizeClaudeCookie(o.Inputs[field.Key]); cookie != "" {
+			return cookie
+		}
+	}
+	return ""
+}
+
+var (
+	claudeSessionKeyPattern = regexp.MustCompile(`^sk-ant-sid[A-Za-z0-9]*-[A-Za-z0-9_-]{20,}$`)
+	cookieNamePattern       = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+	// Cloudflare cookies are bound to the buyer's browser and address, so
+	// they only get the fulfiller's browser challenged.
+	claudeDroppedCookies = []string{"cf_clearance", "__cf_bm", "_cfuvid", "__cflb"}
+)
+
+// NormalizeClaudeCookie accepts what a buyer copies from claude.ai, either
+// the bare sessionKey value or a Cookie header (optionally starting with
+// "Cookie:"), and returns it as "name=value; ..." without Cloudflare
+// cookies. It returns "" when no valid sessionKey is present. It mirrors
+// parseClaudeCookie in the web storefront.
+func NormalizeClaudeCookie(value string) string {
+	value = strings.TrimSpace(value)
+	if prefix, rest, found := strings.Cut(value, ":"); found && strings.EqualFold(strings.TrimSpace(prefix), "cookie") {
+		value = strings.TrimSpace(rest)
+	}
+	if !strings.Contains(value, "=") {
+		if claudeSessionKeyPattern.MatchString(value) {
+			return "sessionKey=" + value
+		}
+		return ""
+	}
+	pairs := []string{}
+	hasSessionKey := false
+	for part := range strings.SplitSeq(value, ";") {
+		name, cookieValue, found := strings.Cut(strings.TrimSpace(part), "=")
+		name = strings.TrimSpace(name)
+		cookieValue = strings.TrimSpace(cookieValue)
+		if !found || !cookieNamePattern.MatchString(name) || strings.ContainsAny(cookieValue, " \t\r\n,;\"\\") {
+			continue
+		}
+		if slices.Contains(claudeDroppedCookies, name) {
+			continue
+		}
+		if name == "sessionKey" {
+			if hasSessionKey || !claudeSessionKeyPattern.MatchString(cookieValue) {
+				continue
+			}
+			hasSessionKey = true
+		}
+		pairs = append(pairs, name+"="+cookieValue)
+	}
+	if !hasSessionKey {
+		return ""
+	}
+	return strings.Join(pairs, "; ")
 }
 
 // CanStartProductFulfillment reports whether "Execute payment" may run. The

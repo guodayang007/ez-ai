@@ -7,6 +7,9 @@ import { SIGNATURE_HEADER, TIMESTAMP_HEADER, sign, verify } from './signature.mj
 const MAX_BODY_BYTES = 64 * 1024
 const TRADE_NO_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 const ACCESS_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
+// A Cookie header with the claude.ai sessionKey, as ez-ai normalizes it.
+const CLAUDE_COOKIE_PATTERN = /(?:^|;\s*)sessionKey=sk-ant-sid[A-Za-z0-9]*-[A-Za-z0-9_-]{20,}(?:;|$)/
+const PROVIDERS = ['chatgpt', 'claude']
 const CARD_NUMBER_PATTERN = /^\d{12,19}$/
 const CARD_EXPIRY_PATTERN = /^(0[1-9]|1[0-2])\/\d{2}$/
 const CARD_CVC_PATTERN = /^\d{3,4}$/
@@ -19,8 +22,10 @@ const PROGRESS_TIMEOUT_MS = 5_000
 /**
  * @typedef {object} PurchaseJob
  * @property {string} tradeNo
+ * @property {'chatgpt' | 'claude'} provider
  * @property {string} plan
- * @property {string} accessToken
+ * @property {string} accessToken ChatGPT only
+ * @property {string} cookie Claude only: a Cookie header with the sessionKey
  * @property {{number: string, expiry: string, cvc: string, holder: string}} card
  * @property {{country: string, currency: string, line1: string, city: string, state: string, postalCode: string}} billing
  * @property {string} browserProxy
@@ -133,15 +138,17 @@ export function createApp(deps) {
     report('queue', 'succeeded', 'Started after waiting {{seconds}}s in the queue', {
       seconds: String(Math.round((Date.now() - queuedAt) / 1000)),
     })
-    log(`purchasing ${job.plan} for ${job.tradeNo}`)
+    log(`purchasing ${job.provider} ${job.plan} for ${job.tradeNo}`)
     /** @type {PurchaseResult} */
     let result
     try {
       result = await deps.purchase(
         {
           tradeNo: job.tradeNo,
+          provider: job.provider,
           plan: job.plan,
           accessToken: job.accessToken,
+          cookie: job.cookie,
           card: job.card,
           billing: job.billing,
           browserProxy: job.browserProxy,
@@ -230,8 +237,11 @@ export function createApp(deps) {
       // Older ez-ai versions send no attempt id; 0 makes ez-ai match the
       // result to the order's running attempt.
       attemptId: Number.isSafeInteger(payload.attempt_id) && payload.attempt_id > 0 ? payload.attempt_id : 0,
+      // Older ez-ai versions send no provider; they only sell ChatGPT.
+      provider: String(payload.provider || 'chatgpt'),
       plan: String(payload.plan ?? ''),
       accessToken: String(payload.access_token ?? ''),
+      cookie: String(payload.cookie ?? ''),
       callbackUrl: String(payload.callback_url ?? ''),
       card: {
         number: String(card.number ?? ''),
@@ -249,7 +259,15 @@ export function createApp(deps) {
       },
       browserProxy: String(payload.browser_proxy ?? ''),
     }
-    if (!TRADE_NO_PATTERN.test(job.tradeNo) || !job.plan || !ACCESS_TOKEN_PATTERN.test(job.accessToken) || !/^https?:\/\//.test(job.callbackUrl)) {
+    const signedIn =
+      job.provider === 'claude' ? CLAUDE_COOKIE_PATTERN.test(job.cookie) : ACCESS_TOKEN_PATTERN.test(job.accessToken)
+    if (
+      !TRADE_NO_PATTERN.test(job.tradeNo) ||
+      !PROVIDERS.includes(job.provider) ||
+      !job.plan ||
+      !signedIn ||
+      !/^https?:\/\//.test(job.callbackUrl)
+    ) {
       reply(400, { error: 'invalid job' })
       return
     }

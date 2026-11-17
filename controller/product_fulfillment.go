@@ -25,10 +25,11 @@ const (
 // can say what to fix.
 func AdminGetProductFulfillmentStatus(c *gin.Context) {
 	status := gin.H{
-		"status":      productFulfillerReady,
-		"plans":       []string{},
-		"service_url": "",
-		"missing":     []string{},
+		"status":       productFulfillerReady,
+		"plans":        []string{},
+		"claude_plans": []string{},
+		"service_url":  "",
+		"missing":      []string{},
 	}
 	if !common.ConfigEncryptionReady() {
 		status["status"] = productFulfillerKeyMissing
@@ -52,6 +53,7 @@ func AdminGetProductFulfillmentStatus(c *gin.Context) {
 	switch {
 	case err == nil:
 		status["plans"] = config.Plans
+		status["claude_plans"] = service.ProductFulfillerClaudePlans
 	case errors.Is(err, service.ErrProductFulfillerUnreachable):
 		status["status"] = productFulfillerUnreachable
 	case errors.Is(err, service.ErrProductFulfillerUnauthorized):

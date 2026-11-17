@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 
 import { createApp } from './app.mjs'
 import { createChatGPTPurchaser } from './chatgpt.mjs'
+import { createClaudePurchaser } from './claude.mjs'
 import { loadConfig } from './config.mjs'
 
 try {
@@ -11,7 +12,8 @@ try {
 }
 
 const config = loadConfig(process.env)
-const app = createApp({ config, purchase: createChatGPTPurchaser(config) })
+const purchasers = { chatgpt: createChatGPTPurchaser(config), claude: createClaudePurchaser(config) }
+const app = createApp({ config, purchase: (job, report) => purchasers[job.provider](job, report) })
 
 createServer((req, res) => {
   app.handle(req, res).catch((error) => {

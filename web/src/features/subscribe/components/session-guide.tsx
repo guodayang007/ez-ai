@@ -26,7 +26,7 @@ import {
   CHATGPT_SESSION_URL,
 } from '@/features/store/lib/chatgpt-session'
 
-function GuideStep(props: {
+export function GuideStep(props: {
   index: number
   title: string
   description: string

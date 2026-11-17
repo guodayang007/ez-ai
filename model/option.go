@@ -238,7 +238,7 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
-	if key == productDefaultsSeededKey {
+	if isProductSeedMarker(key) {
 		return errProductDefaultsSeededReadOnly
 	}
 	if key == legacyAccessTokenRetireAtKey {
@@ -388,7 +388,7 @@ func UpdateOptionsBulk(values map[string]string) error {
 }
 
 func updateOptionMap(key string, value string) (err error) {
-	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || key == productDefaultsSeededKey {
+	if key == retiredThemeOptionKey || key == legacyAccessTokenRetireAtKey || isProductSeedMarker(key) {
 		common.OptionMapRWMutex.Lock()
 		delete(common.OptionMap, key)
 		common.OptionMapRWMutex.Unlock()

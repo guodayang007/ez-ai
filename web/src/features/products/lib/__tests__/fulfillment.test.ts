@@ -24,7 +24,12 @@ import type {
   ProductFulfillmentStepStatus,
   ProductOrder,
 } from '../../types'
-import { canExecutePayment, getAttemptProgress } from '../fulfillment'
+import {
+  canExecutePayment,
+  getAttemptProgress,
+  getDefaultPlan,
+  getOrderPlans,
+} from '../fulfillment'
 
 function order(overrides: Partial<ProductOrder>): ProductOrder {
   return {
@@ -70,6 +75,54 @@ describe('canExecutePayment', () => {
         order({ status: 'processing', fulfillment_status: 'running' })
       )
     ).toBe(false)
+  })
+})
+
+describe('plans of an order', () => {
+  const health = {
+    status: 'ok' as const,
+    plans: ['chatgptplusplan', 'chatgptproplan'],
+    claude_plans: ['claude_pro', 'claude_max_5x', 'claude_max_20x'],
+    service_url: '',
+    missing: [],
+  }
+  const claudeOrder = (skuName: string) =>
+    order({
+      product_title: 'Claude',
+      sku_name: skuName,
+      input_fields: [
+        {
+          key: 'claude_cookie',
+          label: 'Claude Cookie',
+          type: 'claude_cookie',
+          required: true,
+          placeholder: '',
+          description: '',
+          max_length: 0,
+        },
+      ],
+    })
+
+  test('a Claude order is offered the Claude plans, any other the ChatGPT ones', () => {
+    expect(getOrderPlans(claudeOrder('Pro · 1 个月'), health)).toEqual(
+      health.claude_plans
+    )
+    expect(getOrderPlans(order({}), health)).toEqual(health.plans)
+  })
+
+  test.each([
+    ['Pro · 1 个月', 'claude_pro'],
+    ['Max 5x · 1 个月', 'claude_max_5x'],
+    ['Max 20x · 1 个月', 'claude_max_20x'],
+    ['Team', ''],
+  ])('Claude SKU %s preselects %s', (skuName, plan) => {
+    expect(getDefaultPlan(claudeOrder(skuName), health.claude_plans)).toBe(plan)
+  })
+
+  test('a retry keeps the plan of the previous attempt', () => {
+    const retry = { ...claudeOrder('Max 5x'), fulfillment_plan: 'claude_pro' }
+    expect(getDefaultPlan(retry, health.claude_plans)).toBe('claude_pro')
+    expect(getDefaultPlan(order({}), health.plans)).toBe('')
   })
 })
 

@@ -94,6 +94,27 @@ test('job with an incomplete card is refused', async () => {
   assert.equal(purchases.length, 0)
 })
 
+test('a Claude job needs the sessionKey cookie instead of an access token', async () => {
+  purchases = []
+  callbacks = []
+  const claudeJob = (cookie) =>
+    job({ trade_no: 'PO3', provider: 'claude', plan: 'claude_max_5x', access_token: '', cookie })
+  assert.equal((await postJob(claudeJob('lastActiveOrg=org-1'))).status, 400)
+  assert.equal((await postJob(job({ provider: 'gemini' }))).status, 400, 'unknown providers are refused')
+  assert.equal(purchases.length, 0)
+
+  purchaseResult = { success: true, messageKey: 'Paid', deliveryNote: '' }
+  const cookie = 'sessionKey=sk-ant-sid01-AbCdEfGhIjKlMnOpQrStUvWxYz_0123456789-xyzAA; lastActiveOrg=org-1'
+  assert.equal((await postJob(claudeJob(cookie))).status, 202)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(purchases.length, 1)
+  assert.equal(purchases[0].provider, 'claude')
+  assert.equal(purchases[0].cookie, cookie)
+  assert.equal(purchases[0].accessToken, '')
+  releasePurchase()
+  await app.idle()
+})
+
 test('ping is signed', async () => {
   const ping = (secret) => {
     const timestamp = Math.floor(Date.now() / 1000)
@@ -119,8 +140,10 @@ test('accepted job reports each step and then posts its signed result', async ()
   assert.deepEqual(purchases, [
     {
       tradeNo: 'PO1',
+      provider: 'chatgpt',
       plan: 'chatgptplusplan',
       accessToken: TOKEN,
+      cookie: '',
       card: { number: '4242424242424242', expiry: '12/30', cvc: '123', holder: 'Test Holder' },
       billing: { country: 'US', currency: 'USD', line1: '', city: 'Austin', state: '', postalCode: '73301' },
       browserProxy: '',
