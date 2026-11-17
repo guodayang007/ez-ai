@@ -34,9 +34,8 @@ export function createChatGPTPurchaser(config) {
    * @returns {Promise<import('./app.mjs').PurchaseResult>}
    */
   return function purchase(job, report) {
-    return runPurchase(job, report, { headless: config.headless, origin: CHATGPT_ORIGIN }, (apiPage, page, steps) =>
-      buy(apiPage, page, job, steps)
-    )
+    const options = { headless: config.headless, bitBrowserUrl: config.bitBrowserUrl, origin: CHATGPT_ORIGIN }
+    return runPurchase(job, report, options, (apiPage, page, steps) => buy(apiPage, page, job, steps))
   }
 }
 

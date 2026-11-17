@@ -195,10 +195,6 @@ func (c ProductFulfillerConfig) Invalid() string {
 		if err != nil || parsed.Host == "" || !slices.Contains([]string{"http", "https", "socks5"}, parsed.Scheme) {
 			return "Provide a valid proxy URL such as http://user:pass@host:port"
 		}
-		// Chromium cannot sign in to a SOCKS5 proxy.
-		if parsed.Scheme == "socks5" && parsed.User != nil {
-			return "The browser cannot use a SOCKS5 proxy with a username and password; use an HTTP proxy instead"
-		}
 	}
 	return ""
 }

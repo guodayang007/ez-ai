@@ -16,6 +16,11 @@ export function loadConfig(env) {
     problems.push('PORT must be a valid port number')
   }
 
+  const bitBrowserUrl = read('BITBROWSER_URL', 'http://127.0.0.1:54345')
+  if (!URL.canParse(bitBrowserUrl) || !/^https?:$/.test(new URL(bitBrowserUrl).protocol)) {
+    problems.push('BITBROWSER_URL must be the BitBrowser Local API address, such as http://127.0.0.1:54345')
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid configuration:\n- ${problems.join('\n- ')}`)
   }
@@ -25,5 +30,6 @@ export function loadConfig(env) {
     port,
     secret,
     headless: read('HEADLESS', 'true').toLowerCase() !== 'false',
+    bitBrowserUrl,
   }
 }

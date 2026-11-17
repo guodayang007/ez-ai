@@ -1054,4 +1054,7 @@ export const STATIC_I18N_KEYS = [
   "{{site}} is showing a security check. Complete it in the fulfiller's browser window within {{seconds}}s.",
   'The security check was completed; continuing',
   "The security check on {{site}} was not completed within {{seconds}}s. Retry and complete it in the fulfiller's browser window.",
+  // BitBrowser windows (services/dogpay-fulfiller/src/bitbrowser.mjs).
+  'Could not reach the BitBrowser Local API at {{url}}: {{error}}. Start BitBrowser and sign in on the fulfiller machine, and check BITBROWSER_URL in the fulfiller .env.',
+  'BitBrowser {{path}} failed: {{error}}',
 ] as const

@@ -1,9 +1,12 @@
-// Browser plumbing shared by the ChatGPT and Claude purchasers: launching
-// Chromium behind the configured proxy, reporting steps, filling the Stripe
-// card form and waiting for the payment result.
+// Browser plumbing shared by the ChatGPT and Claude purchasers: opening a
+// BitBrowser window behind the configured proxy, reporting steps, filling the
+// Stripe card form and waiting for the payment result.
 import { chromium } from 'playwright'
 
-import { formatMessage } from './message.mjs'
+import { createBitBrowser } from './bitbrowser.mjs'
+import { PurchaseError } from './message.mjs'
+
+export { PurchaseError }
 
 const PAYMENT_TIMEOUT_MS = 180_000
 const POLL_INTERVAL_MS = 2_000
@@ -32,37 +35,6 @@ const SECURITY_CHECK_TIMEOUT_MS = 180_000
 const VERIFICATION_FRAME_PATTERN = /hcaptcha|recaptcha|3ds|three-d-secure|challenge|authenticate/i
 
 /**
- * A failure the admin can act on. The message is an English key with
- * {{name}} placeholders, translated on the ez-ai payment records page.
- */
-export class PurchaseError extends Error {
-  /**
-   * @param {string} key
-   * @param {Record<string, string>} [params]
-   */
-  constructor(key, params = {}) {
-    super(formatMessage(key, params))
-    this.key = key
-    this.params = params
-  }
-}
-
-/**
- * Playwright launch options for the proxy URL saved in ez-ai. Playwright keeps
- * only the scheme and host of `server` and drops any user:pass in it, so the
- * credentials are passed on their own.
- * @param {string} proxyUrl such as http://user:pass@host:port
- */
-export function browserProxyOptions(proxyUrl) {
-  if (!proxyUrl) return undefined
-  const url = new URL(proxyUrl)
-  const options = { server: `${url.protocol}//${url.host}` }
-  if (url.username) options.username = decodeURIComponent(url.username)
-  if (url.password) options.password = decodeURIComponent(url.password)
-  return options
-}
-
-/**
  * @typedef {object} Steps
  * @property {(step: string, messageKey: string, params?: Record<string, string>) => void} start
  * @property {(messageKey: string, params?: Record<string, string>) => void} done
@@ -71,14 +43,16 @@ export function browserProxyOptions(proxyUrl) {
  */
 
 /**
- * Runs one purchase in a fresh browser: opens `origin` (through the proxy
- * when one is set), records the exit address, then hands over to `buy`. Any
- * failure is returned as a result recorded against the step that was running.
+ * Runs one purchase in a fresh BitBrowser window: opens `origin` (through
+ * the proxy when one is set), records the exit address, then hands over to
+ * `buy`. Any failure is returned as a result recorded against the step that
+ * was running. The window is deleted afterwards.
  *
  * @param {import('./app.mjs').PurchaseJob} job
  * @param {import('./app.mjs').ReportStep} report
  * @param {object} options
  * @param {boolean} options.headless
+ * @param {string} options.bitBrowserUrl the BitBrowser Local API, such as http://127.0.0.1:54345
  * @param {string} options.origin such as https://chatgpt.com
  * @param {Array<object>} [options.cookies] added to the context before the first page loads
  * @param {string} [options.requiredCookie] the cookie that signs in; the purchase stops when the browser refuses it
@@ -106,12 +80,23 @@ export async function runPurchase(job, report, options, buy) {
       return waitForSecurityCheck(page, steps, { headless: options.headless, site })
     },
   }
+  const bitBrowser = createBitBrowser(options.bitBrowserUrl)
+  let window
   let browser
   try {
     steps.start('browser', 'Launching the browser')
-    const proxy = browserProxyOptions(job.browserProxy)
-    browser = await chromium.launch({ headless: options.headless, proxy })
-    const context = await browser.newContext({ locale: 'en-US' })
+    // Shown in messages without the username and password.
+    const proxyUrl = job.browserProxy ? new URL(job.browserProxy) : null
+    const proxy = proxyUrl ? `${proxyUrl.protocol}//${proxyUrl.host}` : ''
+    window = await bitBrowser.openWindow({
+      name: `ez-ai ${job.tradeNo}`,
+      proxyUrl: job.browserProxy,
+      headless: options.headless,
+    })
+    browser = await chromium.connectOverCDP(window.ws)
+    // BitBrowser applies the proxy and fingerprint to the default context; a
+    // new context would bypass them.
+    const context = browser.contexts()[0]
     const refused = await addCookies(context, options.cookies ?? [], options.requiredCookie)
     // API calls run from a tab that stays on the provider's site so they
     // carry its cookies; the checkout may be on another origin.
@@ -126,7 +111,7 @@ export async function runPurchase(job, report, options, buy) {
         throw new PurchaseError(
           'Could not reach {{site}} through the browser proxy {{proxy}}: {{error}}. ' +
             'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
-          { site, proxy: proxy.server, error: error.message.split('\n')[0] }
+          { site, proxy, error: error.message.split('\n')[0] }
         )
       }
       throw error
@@ -167,7 +152,12 @@ export async function runPurchase(job, report, options, buy) {
       error instanceof PurchaseError ? error : new PurchaseError('Unexpected error: {{error}}', { error: error.message })
     return { success: false, step: current, messageKey: failure.key, params: failure.params }
   } finally {
-    await browser?.close()
+    await browser?.close().catch(() => {})
+    if (window) {
+      await bitBrowser.discardWindow(window.id).catch((error) => {
+        console.error(`could not delete BitBrowser window ${window.id}: ${error.message}`)
+      })
+    }
   }
 }
 

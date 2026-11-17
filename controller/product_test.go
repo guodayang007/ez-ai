@@ -378,14 +378,14 @@ func TestProductFulfillmentConfigIsStoredEncrypted(t *testing.T) {
 	assert.Equal(t, config, unchanged, "a rejected save keeps the stored settings")
 
 	for proxy, message := range map[string]string{
-		"ftp://proxy:21":                "Provide a valid proxy URL such as http://user:pass@host:port",
-		"proxy:8080":                    "Provide a valid proxy URL such as http://user:pass@host:port",
-		"socks5://user:pass@proxy:1080": "The browser cannot use a SOCKS5 proxy with a username and password; use an HTTP proxy instead",
+		"ftp://proxy:21": "Provide a valid proxy URL such as http://user:pass@host:port",
+		"proxy:8080":     "Provide a valid proxy URL such as http://user:pass@host:port",
 	} {
 		rejected := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"`+proxy+`"}`)
 		assert.Equal(t, message, rejected.Message, proxy)
 	}
-	accepted := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"socks5://proxy:1080"}`)
+	// BitBrowser signs in to SOCKS5 proxies too.
+	accepted := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"socks5://user:pass@proxy:1080"}`)
 	require.True(t, accepted.Success, accepted.Message)
 
 	common.ConfigEncryptionKey = ""

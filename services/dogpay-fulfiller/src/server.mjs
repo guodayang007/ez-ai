@@ -1,6 +1,7 @@
 import { createServer } from 'node:http'
 
 import { createApp } from './app.mjs'
+import { createBitBrowser } from './bitbrowser.mjs'
 import { createChatGPTPurchaser } from './chatgpt.mjs'
 import { createClaudePurchaser } from './claude.mjs'
 import { loadConfig } from './config.mjs'
@@ -23,4 +24,8 @@ createServer((req, res) => {
   })
 }).listen(config.port, config.host, () => {
   console.log(`dogpay-fulfiller listening on ${config.host}:${config.port}; plans and card come from ez-ai settings`)
+  createBitBrowser(config.bitBrowserUrl)
+    .health()
+    .then(() => console.log(`BitBrowser Local API is reachable at ${config.bitBrowserUrl}`))
+    .catch((error) => console.warn(`warning: purchases will fail until BitBrowser runs: ${error.message}`))
 })

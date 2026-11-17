@@ -73,7 +73,13 @@ export function createClaudePurchaser(config) {
     return runPurchase(
       job,
       report,
-      { headless: config.headless, origin: CLAUDE_ORIGIN, cookies, requiredCookie: 'sessionKey' },
+      {
+        headless: config.headless,
+        bitBrowserUrl: config.bitBrowserUrl,
+        origin: CLAUDE_ORIGIN,
+        cookies,
+        requiredCookie: 'sessionKey',
+      },
       (apiPage, page, steps) => buy(apiPage, page, job, cookies, steps)
     )
   }

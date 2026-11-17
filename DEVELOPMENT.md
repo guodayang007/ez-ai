@@ -119,7 +119,7 @@ DEFAULT_USER_PASSWORD=12345678
 
 ## 6. 商品订单自动开通（DogPay）
 
-后台“商品订单”页的“执行支付”按钮会把订单交给独立服务 `services/dogpay-fulfiller`：它用买家提交的 ChatGPT Session 打开结账页，用 DogPay 虚拟卡付款，再回调 ez-ai 把订单置为已完成（失败则保留“处理中”并记录原因，可重试）。
+后台“商品订单”页的“执行支付”按钮会把订单交给独立服务 `services/dogpay-fulfiller`：它在比特浏览器（BitBrowser）里用买家提交的 ChatGPT Session 打开结账页，用 DogPay 虚拟卡付款，再回调 ez-ai 把订单置为已完成（失败则保留“处理中”并记录原因，可重试）。
 
 全部开通配置（服务地址、共享密钥、回调地址、可购买套餐、DogPay 卡、账单地址、浏览器代理）在后台“系统设置 → 计费 → 商品自动开通”填写，只有超级管理员可见。它们用 `CONFIG_ENCRYPTION_KEY` 以 AES-256-GCM 加密后，作为 `options` 表中的一条 `ProductFulfillerConfig` 保存（值以 `enc:v1:` 开头），通用设置接口既不返回也不能修改它。卡号、CVC、密钥和代理保存后不再显示，卡号只显示末四位。
 
@@ -131,20 +131,30 @@ CONFIG_ENCRYPTION_KEY=<至少 32 位，生成：openssl rand -hex 32>
 
 未设置时这些配置不能保存；更换密钥后已保存的配置无法解密，需要换回原密钥或重新填写。
 
-开通服务本身只需要共享密钥：
+开通服务本身只需要共享密钥；运行它的电脑上还要装好比特浏览器客户端，并保持登录：
 
 ```bash
 cd services/dogpay-fulfiller
 bun install
-bunx playwright install chromium     # 首次需要下载浏览器
-cp .env.example .env                 # 只填 FULFILLER_SECRET，与后台设置的共享密钥一致
+bunx playwright install chromium     # 只有跑单元测试需要；付款用比特浏览器
+cp .env.example .env                 # 填 FULFILLER_SECRET，与后台设置的共享密钥一致
 node src/server.mjs                  # 默认监听 127.0.0.1:3100
 npm test                             # 服务自身的单元测试
 ```
 
+浏览器用的是比特浏览器本地接口（文档：https://doc2.bitbrowser.cn/jiekou/liu-lan-qi-jie-kou.html）。`.env` 里的 `BITBROWSER_URL` 默认为 `http://127.0.0.1:54345`，以比特浏览器“设置 → 本地接口”显示的地址为准。
+
+每次执行支付的过程：
+
+1. 调用 `/browser/add` 新建一个临时窗口。窗口名为 `ez-ai <订单号>`，使用随机 Windows 指纹，语言固定为 en-US，代理用后台设置的浏览器代理，Cookie 不同步到比特云端。
+2. 调用 `/browser/open` 打开窗口，再用 Playwright 的 `connectOverCDP` 连接它返回的 `ws` 地址来操作页面。
+3. 无论成功还是失败，结束后都调用 `/browser/close` 关闭窗口，按文档等 5 秒后再调用 `/browser/delete` 彻底删除，买家的登录信息不会留在比特浏览器里。
+
+`HEADLESS=true`（默认）时以 `--headless` 打开窗口；设为 `false` 可以在比特浏览器窗口里看到整个过程，或手动通过人机验证。开通服务启动时会检查比特浏览器本地接口，连不上就打印警告；此时执行支付会在“启动浏览器”一步失败，并写明原因。
+
 每次执行支付时，ez-ai 把卡和账单信息随任务发给开通服务，请求体用共享密钥派生的密钥加密并签名，网络上不出现明文卡号。
 
-浏览器代理填 `http://user:pass@host:port`（也支持 `https://`，以及不带账号密码的 `socks5://host:port`；浏览器不支持带认证的 SOCKS5）。每次执行时“启动浏览器”一步会记录 chatgpt.com 看到的出口 IP 和国家，出口国家与账单国家不一致时详细日志里会提示。
+浏览器代理填 `http://user:pass@host:port`（也支持 `https://` 和带账号密码的 `socks5://user:pass@host:port`，由比特浏览器窗口使用）。每次执行时“启动浏览器”一步会记录 chatgpt.com 看到的出口 IP 和国家，出口国家与账单国家不一致时详细日志里会提示。
 
 开通服务不可用时，“执行支付”弹窗和设置页会说明原因（未设置加密密钥、配置无法解密、缺少哪些项、服务未启动、密钥不一致），并给出“前往开通设置”或“重新检查”。
 
