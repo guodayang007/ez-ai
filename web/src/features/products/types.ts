@@ -180,6 +180,7 @@ export type ProductFulfillerField =
   | 'card_expiry'
   | 'card_cvc'
   | 'card_holder'
+  | 'browser_proxy'
 
 export type ProductFulfillerHealth = {
   status: ProductFulfillerState

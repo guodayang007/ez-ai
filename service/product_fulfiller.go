@@ -229,6 +229,11 @@ func (c ProductFulfillerConfig) Missing() []string {
 	if c.Card.Holder == "" {
 		missing = append(missing, "card_holder")
 	}
+	// Checkouts from the fulfiller machine's own IP are refused as unusual
+	// activity, so purchases only run behind a proxy.
+	if c.BrowserProxy == "" {
+		missing = append(missing, "browser_proxy")
+	}
 	return missing
 }
 

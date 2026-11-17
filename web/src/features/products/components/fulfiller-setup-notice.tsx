@@ -83,6 +83,7 @@ export function FulfillerSetupNotice(props: FulfillerSetupNoticeProps) {
         card_expiry: t('Expiry (MM/YY)'),
         card_cvc: t('CVC'),
         card_holder: t('Cardholder name'),
+        browser_proxy: t('Browser proxy'),
       }
       steps.push({
         text: t('Fill in: {{fields}}', {

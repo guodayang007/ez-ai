@@ -74,6 +74,38 @@ export function createBitBrowser(baseUrl, deps = {}) {
     health: () => call('/health'),
 
     /**
+     * Asks BitBrowser to connect through the proxy and look up the IP it
+     * exits from, before any window uses it.
+     * @param {string} proxyUrl such as http://user:pass@host:port
+     * @returns {Promise<{ip: string, country: string, city: string, timeZone: string}>} country is a two-letter code
+     */
+    async checkProxy(proxyUrl) {
+      const { host, port, proxyType, proxyUserName, proxyPassword } = bitBrowserProxy(proxyUrl)
+      const checked = await call(
+        '/checkagent',
+        { host, port, proxyType, proxyUserName, proxyPassword, ipCheckService: 'ip123in', checkExists: 0 },
+        OPEN_TIMEOUT_MS
+      )
+      const exit = checked?.data
+      if (checked?.success !== true || !exit?.ip) {
+        throw new PurchaseError(
+          'BitBrowser could not connect through the browser proxy {{proxy}}: {{error}}. ' +
+            'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
+          {
+            proxy: `${proxyType}://${host}:${port}`,
+            error: String(checked?.message ?? checked?.msg ?? 'no exit IP returned').slice(0, 300),
+          }
+        )
+      }
+      return {
+        ip: String(exit.ip),
+        country: String(exit.countryCode ?? '').toUpperCase(),
+        city: String(exit.city ?? ''),
+        timeZone: String(exit.timeZone ?? ''),
+      }
+    },
+
+    /**
      * Creates a window with a random Windows fingerprint behind the proxy and
      * opens it. The window is deleted again when it cannot be opened.
      * @param {object} options
@@ -97,6 +129,11 @@ export function createBitBrowser(baseUrl, deps = {}) {
           ostype: 'PC',
           os: 'Win32',
           osVersion: '11,10',
+          // Time zone and location follow the proxy IP, and WebRTC shows the
+          // proxy IP instead of this machine's, so the site sees one place.
+          isIpCreateTimeZone: true,
+          isIpCreatePosition: true,
+          webRTC: '0',
           // Pages in English, so the selectors and messages match wherever the proxy exits.
           isIpCreateLanguage: false,
           languages: 'en-US',

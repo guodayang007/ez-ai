@@ -119,7 +119,7 @@ describe('order payment dialog', () => {
         status: 'not_configured',
         plans: [],
         service_url: '',
-        missing: ['url', 'card_number'],
+        missing: ['url', 'card_number', 'browser_proxy'],
       })
     )
     const { router, onOpenChange } = renderDialog()
@@ -128,7 +128,9 @@ describe('order payment dialog', () => {
       await screen.findByText('DogPay auto-fulfillment is not set up')
     ).toBeInTheDocument()
     expect(
-      screen.getByText('Fill in: Fulfillment service URL, Card number')
+      screen.getByText(
+        'Fill in: Fulfillment service URL, Card number, Browser proxy'
+      )
     ).toBeInTheDocument()
     const main = screen.getByRole('button', {
       name: 'Open fulfillment settings',

@@ -421,7 +421,7 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
                   : 'http://user:pass@host:port'
               }
               description={t(
-                'Optional. The checkout browser goes through this proxy'
+                'Required. The checkout browser goes through this proxy. Use a residential IP in the billing country'
               )}
             />
             {view.has_browser_proxy && (

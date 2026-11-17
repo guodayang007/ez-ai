@@ -85,9 +85,31 @@ export async function runPurchase(job, report, options, buy) {
   let browser
   try {
     steps.start('browser', 'Launching the browser')
+    // Checkouts from this machine's own IP, or from outside the billing
+    // country, are refused as unusual activity and can flag the account, so
+    // a purchase only runs behind a proxy that exits in the billing country.
+    if (!job.browserProxy) {
+      throw new PurchaseError(
+        'No browser proxy is set, so the purchase was not started. ' +
+          'Set a residential proxy in {{billing}} as the browser proxy in the ez-ai Product Fulfillment settings.',
+        { billing: job.billing.country }
+      )
+    }
     // Shown in messages without the username and password.
-    const proxyUrl = job.browserProxy ? new URL(job.browserProxy) : null
-    const proxy = proxyUrl ? `${proxyUrl.protocol}//${proxyUrl.host}` : ''
+    const proxyUrl = new URL(job.browserProxy)
+    const proxy = `${proxyUrl.protocol}//${proxyUrl.host}`
+    const proxyExit = await bitBrowser.checkProxy(job.browserProxy)
+    steps.info('BitBrowser checked the browser proxy {{proxy}}: exit IP {{ip}} ({{country}} {{city}}, time zone {{timeZone}})', {
+      proxy,
+      ...proxyExit,
+    })
+    if (job.billing.country && proxyExit.country !== job.billing.country) {
+      throw new PurchaseError(
+        'The browser proxy {{proxy}} exits in {{country}} (IP {{ip}}) but the billing country is {{billing}}, ' +
+          'so the purchase was not started. Use a proxy in {{billing}}.',
+        { proxy, country: proxyExit.country || 'unknown', ip: proxyExit.ip, billing: job.billing.country }
+      )
+    }
     window = await bitBrowser.openWindow({
       name: `ez-ai ${job.tradeNo}`,
       proxyUrl: job.browserProxy,
@@ -105,16 +127,13 @@ export async function runPurchase(job, report, options, buy) {
     try {
       await apiPage.goto(options.origin, { waitUntil: 'domcontentloaded' })
     } catch (error) {
-      // A wrong proxy password shows up only as a timeout, so any failure
-      // here with a proxy points at the proxy.
-      if (proxy) {
-        throw new PurchaseError(
-          'Could not reach {{site}} through the browser proxy {{proxy}}: {{error}}. ' +
-            'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
-          { site, proxy, error: error.message.split('\n')[0] }
-        )
-      }
-      throw error
+      // A wrong proxy password shows up only as a timeout, so a failure here
+      // points at the proxy.
+      throw new PurchaseError(
+        'Could not reach {{site}} through the browser proxy {{proxy}}: {{error}}. ' +
+          'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
+        { site, proxy, error: error.message.split('\n')[0] }
+      )
     }
     await steps.securityCheck(apiPage)
     // Cloudflare in front of the site reports the address it sees, so the
@@ -130,21 +149,18 @@ export async function runPurchase(job, report, options, buy) {
       ip: /^ip=(.+)$/m.exec(trace)?.[1] ?? 'unknown',
       country: /^loc=(.+)$/m.exec(trace)?.[1] ?? 'unknown',
     }
-    steps.done(
-      proxy
-        ? 'Opened {{site}} through the browser proxy; exit IP {{ip}} ({{country}})'
-        : 'Opened {{site}} without a browser proxy; exit IP {{ip}} ({{country}})',
-      exit
-    )
+    // The site's own view decides: a proxy that rotates or leaks may exit
+    // elsewhere than BitBrowser's check showed.
+    if (exit.country !== 'unknown' && job.billing.country && exit.country !== job.billing.country) {
+      throw new PurchaseError(
+        '{{site}} sees the browser at {{ip}} in {{country}} but the billing country is {{billing}}, ' +
+          'so the purchase was stopped before checkout. Use a browser proxy in {{billing}}.',
+        { site, ip: exit.ip, country: exit.country, billing: job.billing.country }
+      )
+    }
+    steps.done('Opened {{site}} through the browser proxy; exit IP {{ip}} ({{country}})', exit)
     if (refused.length > 0) {
       steps.info('The browser refused these cookies, so they were left out: {{names}}', { names: refused.join(', ') })
-    }
-    if (exit.country !== 'unknown' && job.billing.country && exit.country !== job.billing.country) {
-      steps.info(
-        'The browser exits in {{country}} but the billing country is {{billing}}; {{site}} may refuse the checkout. ' +
-          'Set a browser proxy in {{billing}}.',
-        { site, country: exit.country, billing: job.billing.country }
-      )
     }
     return await buy(apiPage, page, steps)
   } catch (error) {

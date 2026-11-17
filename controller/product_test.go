@@ -277,10 +277,11 @@ func useProductFulfillerConfig(t *testing.T, config service.ProductFulfillerConf
 
 func completeProductFulfillerConfig(url, secret string) service.ProductFulfillerConfig {
 	return service.ProductFulfillerConfig{
-		URL:    url,
-		Secret: secret,
-		Plans:  []string{"chatgptplusplan"},
-		Card:   service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "12/30", CVC: "123", Holder: "Test Holder"},
+		URL:          url,
+		Secret:       secret,
+		Plans:        []string{"chatgptplusplan"},
+		Card:         service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "12/30", CVC: "123", Holder: "Test Holder"},
+		BrowserProxy: "http://user:pass@proxy.example:8080",
 	}
 }
 
@@ -308,8 +309,8 @@ func TestProductFulfillmentStatusExplainsSetupProblems(t *testing.T) {
 		want   string
 	}{
 		{name: "no encryption key", want: `{"status":"key_missing","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
-		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"","missing":["url","secret","plans","card_number","card_expiry","card_cvc","card_holder"]}`},
-		{name: "card missing", key: productTestEncryptionKey, config: &service.ProductFulfillerConfig{URL: fulfiller.URL, Secret: secret, Plans: []string{"chatgptplusplan"}}, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":["card_number","card_expiry","card_cvc","card_holder"]}`},
+		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"","missing":["url","secret","plans","card_number","card_expiry","card_cvc","card_holder","browser_proxy"]}`},
+		{name: "card missing", key: productTestEncryptionKey, config: &service.ProductFulfillerConfig{URL: fulfiller.URL, Secret: secret, Plans: []string{"chatgptplusplan"}}, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":["card_number","card_expiry","card_cvc","card_holder","browser_proxy"]}`},
 		{name: "saved under another key", key: "another-config-encryption-key-0123456789", config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"config_unreadable","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
 		{name: "service not running", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(stoppedURL, secret)), want: `{"status":"unreachable","plans":[],"claude_plans":[],"service_url":"` + stoppedURL + `","missing":[]}`},
 		{name: "secret differs from the service", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, strings.Repeat("x", 32))), want: `{"status":"unauthorized","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":[]}`},
@@ -550,15 +551,16 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, "The fulfillment service accepted the job", stepOf(running, model.ProductFulfillmentStepSubmit).Message)
 	assert.Equal(t, model.ProductFulfillmentStepRunning, stepOf(running, model.ProductFulfillmentStepQueue).Status)
 	assert.Equal(t, service.ProductFulfillmentJob{
-		TradeNo:     order.TradeNo,
-		AttemptId:   running.Id,
-		Provider:    service.ProductFulfillmentProviderChatGPT,
-		Plan:        "chatgptplusplan",
-		AccessToken: token,
-		CallbackURL: "https://ez-ai.test/api/product/fulfillment/callback",
-		Card:        config.Card,
-		Billing:     service.ProductFulfillerBilling{Country: "US", Currency: "USD", City: "Austin"},
-	}, received[1], "the job carries the card and the billing address with default country and currency")
+		TradeNo:      order.TradeNo,
+		AttemptId:    running.Id,
+		Provider:     service.ProductFulfillmentProviderChatGPT,
+		Plan:         "chatgptplusplan",
+		AccessToken:  token,
+		CallbackURL:  "https://ez-ai.test/api/product/fulfillment/callback",
+		Card:         config.Card,
+		Billing:      service.ProductFulfillerBilling{Country: "US", Currency: "USD", City: "Austin"},
+		BrowserProxy: config.BrowserProxy,
+	}, received[1], "the job carries the card, the billing address with default country and currency, and the proxy")
 
 	again := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	assert.Equal(t, "Automatic payment is already running for this order", again.Message, "a running purchase cannot be started twice")
