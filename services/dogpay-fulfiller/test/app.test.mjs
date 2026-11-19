@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { after, before, test } from 'node:test'
 
-import { createApp } from '../src/app.mjs'
+import { createApp, readProxy } from '../src/app.mjs'
 import { loadConfig } from '../src/config.mjs'
 import { openSealed, seal } from '../src/sealed.mjs'
 import { SIGNATURE_HEADER, TIMESTAMP_HEADER, sign, verify } from '../src/signature.mjs'
@@ -238,4 +238,17 @@ test('signature matches the ez-ai scheme', () => {
   assert.equal(signature, '4b15c0aca50b26446c081d40c59fed570b2fc8641345102bd26210eb6577b459')
   assert.ok(verify(SECRET, '1800000000', signature, body, 1800000000))
   assert.ok(!verify(SECRET, '1800000000', signature, body, 1800000000 + 6 * 60), 'stale timestamps are rejected')
+})
+
+test('a job proxy is read only when its type, host and port are valid', () => {
+  assert.deepEqual(readProxy({ type: 'SOCKS5', host: ' us.proxy.test ', port: 1080, username: 'u', password: 'p' }), {
+    proxyType: 'socks5',
+    host: 'us.proxy.test',
+    port: 1080,
+    proxyUserName: 'u',
+    proxyPassword: 'p',
+  })
+  assert.equal(readProxy({ type: 'vpn', host: 'h', port: 1080 }), null)
+  assert.equal(readProxy({ type: 'http', host: '', port: 1080 }), null)
+  assert.equal(readProxy({ type: 'http', host: 'h', port: 70000 }), null, 'a bad port must not fall back to a direct connection')
 })

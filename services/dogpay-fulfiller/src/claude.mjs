@@ -76,7 +76,6 @@ export function createClaudePurchaser(config) {
       {
         headless: config.headless,
         bitBrowserUrl: config.bitBrowserUrl,
-        bitBrowserProxy: config.bitBrowserProxy,
         origin: CLAUDE_ORIGIN,
         cookies,
         requiredCookie: 'sessionKey',

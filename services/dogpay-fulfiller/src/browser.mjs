@@ -53,7 +53,6 @@ const VERIFICATION_FRAME_PATTERN = /hcaptcha|recaptcha|3ds|three-d-secure|challe
  * @param {object} options
  * @param {boolean} options.headless
  * @param {string} options.bitBrowserUrl the BitBrowser Local API, such as http://127.0.0.1:54345
- * @param {object | null} [options.bitBrowserProxy] proxy for the windows; null connects directly
  * @param {string} options.origin such as https://chatgpt.com
  * @param {Array<object>} [options.cookies] added to the context before the first page loads
  * @param {string} [options.requiredCookie] the cookie that signs in; the purchase stops when the browser refuses it
@@ -81,18 +80,18 @@ export async function runPurchase(job, report, options, buy) {
       return waitForSecurityCheck(page, steps, { headless: options.headless, site })
     },
   }
-  const bitBrowser = createBitBrowser(options.bitBrowserUrl, { proxy: options.bitBrowserProxy ?? null })
+  // The job's proxy (set in ez-ai's fulfillment settings) routes the windows; none connects directly.
+  const bitBrowser = createBitBrowser(options.bitBrowserUrl, { proxy: job.proxy ?? null })
   let window
   let browser
   try {
     steps.start('browser', 'Launching the browser')
-    // With a configured proxy, refuse before any window opens if it exits
-    // outside the billing country.
+    // With a proxy, refuse before any window opens if it exits outside the billing country.
     const proxyExit = await bitBrowser.checkProxy()
     if (proxyExit?.countryCode && job.billing.country && proxyExit.countryCode !== job.billing.country) {
       throw new PurchaseError(
-        'The BITBROWSER_PROXY exits at {{ip}} in {{country}}, but the billing country is {{billing}}, ' +
-          'so no browser was opened. Configure a proxy in {{billing}} in the fulfiller .env.',
+        'The proxy exits at {{ip}} in {{country}}, but the billing country is {{billing}}, ' +
+          'so no browser was opened. Set a proxy in {{billing}} in the ez-ai fulfillment settings.',
         { ip: proxyExit.ip || 'unknown', country: proxyExit.countryCode, billing: job.billing.country }
       )
     }
@@ -134,8 +133,8 @@ export async function runPurchase(job, report, options, buy) {
     if (exit.country !== 'unknown' && job.billing.country && exit.country !== job.billing.country) {
       throw new PurchaseError(
         '{{site}} sees the browser at {{ip}} in {{country}} but the billing country is {{billing}}, ' +
-          'so the purchase was stopped before checkout. Route the windows through a proxy in {{billing}} ' +
-          '(BITBROWSER_PROXY_* in the fulfiller .env), or run the fulfiller from a connection in {{billing}}.',
+          'so the purchase was stopped before checkout. Set a proxy in {{billing}} in the ez-ai fulfillment settings, ' +
+          'or run the fulfiller from a connection in {{billing}}.',
         { site, ip: exit.ip, country: exit.country, billing: job.billing.country }
       )
     }

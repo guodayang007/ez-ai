@@ -385,6 +385,27 @@ func TestProductFulfillmentConfigIsStoredEncrypted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, secret, config.Secret)
 
+	// The purchase proxy is stored encrypted with the settings, its password is
+	// never sent back, and leaving it out keeps the saved proxy.
+	proxied := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{
+		"plans":["chatgptplusplan"],"proxy":{"type":"SOCKS5","host":"us.proxy.example","port":1080,"username":"buyer","password":"proxy-pass"}}`)
+	require.True(t, proxied.Success, proxied.Message)
+	assert.Contains(t, string(proxied.Data), `"has_password":true`)
+	assert.NotContains(t, string(proxied.Data), "proxy-pass", "the proxy password is never sent back")
+	var proxyStored model.Option
+	require.NoError(t, model.DB.Where(&model.Option{Key: system_setting.ProductFulfillerConfigOption}).First(&proxyStored).Error)
+	assert.NotContains(t, proxyStored.Value, "proxy-pass", "the database holds no plain proxy password")
+	assert.NotContains(t, proxyStored.Value, "us.proxy.example", "the database holds no plain proxy host")
+	kept = callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"plans":["chatgptplusplan"]}`)
+	require.True(t, kept.Success, kept.Message)
+	config, err = service.LoadProductFulfillerConfig()
+	require.NoError(t, err)
+	assert.Equal(t, service.ProductFulfillerProxy{Type: "socks5", Host: "us.proxy.example", Port: 1080, Username: "buyer", Password: "proxy-pass"}, config.Proxy)
+	badProxy := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"plans":[],"proxy":{"type":"vpn","host":"h","port":1080}}`)
+	assert.Equal(t, "The proxy type must be http, https, socks5 or ssh", badProxy.Message)
+	noHost := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"plans":[],"proxy":{"type":"http","host":"","port":1080}}`)
+	assert.Equal(t, "The proxy needs a host and a port between 1 and 65535", noHost.Message)
+
 	invalid := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"url":"ftp://fulfiller","plans":[]}`)
 	assert.Equal(t, "Provide a valid URL starting with http:// or https://", invalid.Message)
 	unchanged, err := service.LoadProductFulfillerConfig()

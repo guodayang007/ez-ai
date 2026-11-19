@@ -112,8 +112,19 @@ type productFulfillmentConfigView struct {
 	Plans               []string                        `json:"plans"`
 	HasSecret           bool                            `json:"has_secret"`
 	Billing             service.ProductFulfillerBilling `json:"billing"`
+	Proxy               productFulfillmentProxyView     `json:"proxy"`
 	SecretMinLength     int                             `json:"secret_min_length"`
 	EncryptionKeyLength int                             `json:"encryption_key_min_length"`
+}
+
+// productFulfillmentProxyView is the purchase proxy without its password,
+// which is reported only as set or not.
+type productFulfillmentProxyView struct {
+	Type        string `json:"type"`
+	Host        string `json:"host"`
+	Port        int    `json:"port"`
+	Username    string `json:"username"`
+	HasPassword bool   `json:"has_password"`
 }
 
 // AdminGetProductFulfillmentConfig returns the saved fulfiller settings
@@ -141,6 +152,13 @@ func AdminGetProductFulfillmentConfig(c *gin.Context) {
 	}
 	view.HasSecret = config.Secret != ""
 	view.Billing = config.Billing
+	view.Proxy = productFulfillmentProxyView{
+		Type:        config.Proxy.Type,
+		Host:        config.Proxy.Host,
+		Port:        config.Proxy.Port,
+		Username:    config.Proxy.Username,
+		HasPassword: config.Proxy.Password != "",
+	}
 	common.ApiSuccess(c, view)
 }
 
@@ -153,6 +171,17 @@ type productFulfillmentConfigUpdate struct {
 	Plans       []string                        `json:"plans"`
 	Billing     service.ProductFulfillerBilling `json:"billing"`
 	Secret      *string                         `json:"secret"`
+	// Proxy left out keeps the saved proxy. Its password, when left out,
+	// keeps the saved password.
+	Proxy *productFulfillmentProxyUpdate `json:"proxy"`
+}
+
+type productFulfillmentProxyUpdate struct {
+	Type     string  `json:"type"`
+	Host     string  `json:"host"`
+	Port     int     `json:"port"`
+	Username string  `json:"username"`
+	Password *string `json:"password"`
 }
 
 // AdminUpdateProductFulfillmentConfig validates the fulfiller settings and
@@ -182,6 +211,19 @@ func AdminUpdateProductFulfillmentConfig(c *gin.Context) {
 	}
 	if req.Secret != nil {
 		config.Secret = *req.Secret
+	}
+	config.Proxy = saved.Proxy
+	if req.Proxy != nil {
+		config.Proxy = service.ProductFulfillerProxy{
+			Type:     req.Proxy.Type,
+			Host:     req.Proxy.Host,
+			Port:     req.Proxy.Port,
+			Username: req.Proxy.Username,
+			Password: saved.Proxy.Password,
+		}
+		if req.Proxy.Password != nil {
+			config.Proxy.Password = *req.Proxy.Password
+		}
 	}
 	config.Normalize()
 	if msg := config.Invalid(); msg != "" {

@@ -84,15 +84,29 @@ type ProductFulfillerBilling struct {
 	PostalCode string `json:"postal_code"`
 }
 
+// ProductFulfillerProxy routes the purchase browser windows through a proxy
+// whose exit is in the billing country. An empty Type connects directly.
+type ProductFulfillerProxy struct {
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// productFulfillerProxyTypes are the proxy types BitBrowser accepts for a window.
+var productFulfillerProxyTypes = []string{"http", "https", "socks5", "ssh"}
+
 // ProductFulfillerConfig is everything the fulfiller needs: where it runs,
-// the shared secret, the plans it may buy and the billing address. The cards it pays with come from the card pool
-// (PaymentCard), one per job.
+// the shared secret, the plans it may buy, the billing address and the proxy.
+// The cards it pays with come from the card pool (PaymentCard), one per job.
 type ProductFulfillerConfig struct {
 	URL         string                  `json:"url"`
 	Secret      string                  `json:"secret"`
 	CallbackURL string                  `json:"callback_url"`
 	Plans       []string                `json:"plans"`
 	Billing     ProductFulfillerBilling `json:"billing"`
+	Proxy       ProductFulfillerProxy   `json:"proxy"`
 }
 
 // LoadProductFulfillerConfig decrypts the saved settings. Nothing saved yet
@@ -147,6 +161,9 @@ func (c *ProductFulfillerConfig) Normalize() {
 	c.Billing.City = strings.TrimSpace(c.Billing.City)
 	c.Billing.State = strings.TrimSpace(c.Billing.State)
 	c.Billing.PostalCode = strings.TrimSpace(c.Billing.PostalCode)
+	c.Proxy.Type = strings.ToLower(strings.TrimSpace(c.Proxy.Type))
+	c.Proxy.Host = strings.TrimSpace(c.Proxy.Host)
+	c.Proxy.Username = strings.TrimSpace(c.Proxy.Username)
 }
 
 // Invalid returns the message key of the first malformed value, or "". Empty
@@ -171,6 +188,14 @@ func (c ProductFulfillerConfig) Invalid() string {
 	}
 	if c.Billing.Currency != "" && !productFulfillerCurrencyPattern.MatchString(c.Billing.Currency) {
 		return "The currency must be a three-letter code such as USD"
+	}
+	if c.Proxy.Type != "" {
+		if !slices.Contains(productFulfillerProxyTypes, c.Proxy.Type) {
+			return "The proxy type must be http, https, socks5 or ssh"
+		}
+		if c.Proxy.Host == "" || c.Proxy.Port < 1 || c.Proxy.Port > 65535 {
+			return "The proxy needs a host and a port between 1 and 65535"
+		}
 	}
 	return ""
 }
@@ -291,6 +316,8 @@ type ProductFulfillmentJob struct {
 	// Card is the pooled card chosen for this purchase; the caller sets it.
 	Card    ProductFulfillerCard    `json:"card"`
 	Billing ProductFulfillerBilling `json:"billing"`
+	// Proxy is set when the purchase windows must exit through a proxy.
+	Proxy *ProductFulfillerProxy `json:"proxy,omitempty"`
 }
 
 // SubmitProductFulfillment hands a job, with the card to pay with, to the
@@ -299,6 +326,9 @@ type ProductFulfillmentJob struct {
 func SubmitProductFulfillment(config ProductFulfillerConfig, job ProductFulfillmentJob) error {
 	job.CallbackURL = config.EffectiveCallbackURL()
 	job.Billing = config.billingWithDefaults()
+	if config.Proxy.Type != "" {
+		job.Proxy = &config.Proxy
+	}
 	plaintext, err := common.Marshal(job)
 	if err != nil {
 		return err

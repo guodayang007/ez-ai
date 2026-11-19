@@ -10,6 +10,8 @@ const ACCESS_TOKEN_PATTERN = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/
 // A Cookie header with the claude.ai sessionKey, as ez-ai normalizes it.
 const CLAUDE_COOKIE_PATTERN = /(?:^|;\s*)sessionKey=sk-ant-sid[A-Za-z0-9]*-[A-Za-z0-9_-]{20,}(?:;|$)/
 const PROVIDERS = ['chatgpt', 'claude']
+// Proxy types BitBrowser accepts for a window.
+const PROXY_TYPES = ['http', 'https', 'socks5', 'ssh']
 const CARD_NUMBER_PATTERN = /^\d{12,19}$/
 const CARD_EXPIRY_PATTERN = /^(0[1-9]|1[0-2])\/\d{2}$/
 const CARD_CVC_PATTERN = /^\d{3,4}$/
@@ -28,6 +30,8 @@ const PROGRESS_TIMEOUT_MS = 5_000
  * @property {string} cookie Claude only: a Cookie header with the sessionKey
  * @property {{number: string, expiry: string, cvc: string, holder: string}} card
  * @property {{country: string, currency: string, line1: string, city: string, state: string, postalCode: string}} billing
+ * @property {{proxyType: string, host: string, port: number, proxyUserName: string, proxyPassword: string} | null} proxy
+ *   the proxy the browser windows exit through; null connects directly
  */
 
 /**
@@ -43,6 +47,27 @@ const PROGRESS_TIMEOUT_MS = 5_000
  * @property {string} [step] the step that failed
  * @property {string} [deliveryNote]
  */
+
+/**
+ * Reads the proxy ez-ai sends with a job. A proxy with a bad type, host or
+ * port is refused, so the job never connects directly by mistake.
+ * @returns {{proxyType: string, host: string, port: number, proxyUserName: string, proxyPassword: string} | null}
+ */
+export function readProxy(value) {
+  const proxyType = String(value.type ?? '').toLowerCase()
+  const port = Number(value.port)
+  const host = String(value.host ?? '').trim()
+  if (!PROXY_TYPES.includes(proxyType) || !host || !Number.isInteger(port) || port < 1 || port > 65535) {
+    return null
+  }
+  return {
+    proxyType,
+    host,
+    port,
+    proxyUserName: String(value.username ?? ''),
+    proxyPassword: String(value.password ?? ''),
+  }
+}
 
 /**
  * @param {object} deps
@@ -231,6 +256,7 @@ export function createApp(deps) {
     }
     const card = payload.card ?? {}
     const billing = payload.billing ?? {}
+    const proxy = payload.proxy ? readProxy(payload.proxy) : null
     const job = {
       tradeNo: String(payload.trade_no ?? ''),
       // Older ez-ai versions send no attempt id; 0 makes ez-ai match the
@@ -256,6 +282,7 @@ export function createApp(deps) {
         state: String(billing.state ?? ''),
         postalCode: String(billing.postal_code ?? ''),
       },
+      proxy,
     }
     const signedIn =
       job.provider === 'claude' ? CLAUDE_COOKIE_PATTERN.test(job.cookie) : ACCESS_TOKEN_PATTERN.test(job.accessToken)
@@ -264,7 +291,8 @@ export function createApp(deps) {
       !PROVIDERS.includes(job.provider) ||
       !job.plan ||
       !signedIn ||
-      !/^https?:\/\//.test(job.callbackUrl)
+      !/^https?:\/\//.test(job.callbackUrl) ||
+      (payload.proxy && !proxy)
     ) {
       reply(400, { error: 'invalid job' })
       return

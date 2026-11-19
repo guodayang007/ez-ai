@@ -160,15 +160,15 @@ npm test                             # 服务自身的单元测试
 
 所有支付方式（ChatGPT 与 Claude）都通过比特浏览器完成。出口 IP 决定结账是否被拒：从其他国家结账会被 chatgpt.com 以“异常活动”拒绝。比特浏览器只能改指纹、时区和语言，不能改出口 IP，所以开通服务所在网络不在账单国家（默认 US）时，必须给窗口配置该国家的代理。
 
-代理配置在开通服务的 `.env` 中（留空即直连）：
+代理配置保存在 ez-ai 的数据库里，和其他开通配置一样用 `CONFIG_ENCRYPTION_KEY` 加密（`options` 表 `ProductFulfillerConfig` 的 `proxy` 字段），不写入开通服务的 `.env`。字段为类型（`http` / `https` / `socks5` / `ssh`，留空为直连）、主机、端口、用户名和密码；接口只返回是否已设置密码，不返回密码本身。保存时不传 `proxy` 会保留原配置，不传 `password` 会保留原密码。
 
+设置方式：超级管理员调用 `PUT /api/product/fulfillment/config`，请求体带上 `proxy`，例如：
+
+```json
+{ "proxy": { "type": "socks5", "host": "代理主机", "port": 1080, "username": "用户名", "password": "密码" } }
 ```
-BITBROWSER_PROXY_TYPE=socks5        # http | https | socks5 | ssh；留空为直连
-BITBROWSER_PROXY_HOST=...
-BITBROWSER_PROXY_PORT=...
-BITBROWSER_PROXY_USERNAME=...
-BITBROWSER_PROXY_PASSWORD=...
-```
+
+ez-ai 把代理随每个开通任务（加密）发给开通服务，开通服务按任务使用它，不需要重启。
 
 代理出口必须在账单国家。开通服务会先用 `/checkagent` 检测，不符合则在打开窗口前停止，不扣款。数据中心 IP 也可能被 chatgpt.com 拒绝，住宅代理更稳妥。
 

@@ -138,15 +138,3 @@ test('a BitBrowser proxy check that reports failure is surfaced', async () => {
   })
   await assert.rejects(bitBrowser.checkProxy(), (error) => error.params.error === '代理连接失败')
 })
-
-test('the proxy settings are validated and read from the environment', async () => {
-  const { loadConfig } = await import('../src/config.mjs')
-  const base = { FULFILLER_SECRET: 'x'.repeat(32) }
-  assert.equal(loadConfig(base).bitBrowserProxy, null)
-  assert.deepEqual(
-    loadConfig({ ...base, BITBROWSER_PROXY_TYPE: 'SOCKS5', BITBROWSER_PROXY_HOST: 'h', BITBROWSER_PROXY_PORT: '1080', BITBROWSER_PROXY_USERNAME: 'u', BITBROWSER_PROXY_PASSWORD: 'p' }).bitBrowserProxy,
-    { proxyType: 'socks5', host: 'h', port: 1080, proxyUserName: 'u', proxyPassword: 'p' }
-  )
-  assert.throws(() => loadConfig({ ...base, BITBROWSER_PROXY_TYPE: 'vpn', BITBROWSER_PROXY_HOST: 'h', BITBROWSER_PROXY_PORT: '1080' }), /BITBROWSER_PROXY_TYPE/)
-  assert.throws(() => loadConfig({ ...base, BITBROWSER_PROXY_TYPE: 'http', BITBROWSER_PROXY_PORT: '1080' }), /BITBROWSER_PROXY_HOST/)
-})
