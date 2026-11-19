@@ -8,40 +8,26 @@
 import { PurchaseError } from './message.mjs'
 
 const REQUEST_TIMEOUT_MS = 30_000
-// Opening checks the proxy and may wait in BitBrowser's open queue.
+// Opening may wait in BitBrowser's open queue.
 const OPEN_TIMEOUT_MS = 120_000
 // The docs ask to wait 5 seconds after closing, until the browser process has
 // exited, before deleting or reopening the window.
 const CLOSE_SETTLE_MS = 5_000
-const DEFAULT_PORTS = { 'http:': 80, 'https:': 443, 'socks5:': 1080 }
-
-/**
- * The proxy fields of a BitBrowser window for the proxy URL saved in ez-ai.
- * BitBrowser signs in to HTTP, HTTPS and SOCKS5 proxies alike.
- * @param {string} proxyUrl such as http://user:pass@host:port, or '' for none
- */
-export function bitBrowserProxy(proxyUrl) {
-  if (!proxyUrl) return { proxyMethod: 2, proxyType: 'noproxy' }
-  const url = new URL(proxyUrl)
-  return {
-    proxyMethod: 2,
-    proxyType: url.protocol.slice(0, -1),
-    host: url.hostname.replace(/^\[|\]$/g, ''),
-    port: url.port ? Number(url.port) : DEFAULT_PORTS[url.protocol],
-    proxyUserName: decodeURIComponent(url.username),
-    proxyPassword: decodeURIComponent(url.password),
-  }
-}
+// Windows connect directly, from this machine's own network, unless a proxy is configured.
+const DIRECT_CONNECTION = { proxyMethod: 2, proxyType: 'noproxy' }
 
 /**
  * @param {string} baseUrl such as http://127.0.0.1:54345
  * @param {object} [deps]
+ * @param {{proxyType: string, host: string, port: number, proxyUserName: string, proxyPassword: string} | null} [deps.proxy]
+ *   the proxy every purchase window uses; null connects directly
  * @param {typeof fetch} [deps.fetchImpl]
  * @param {(ms: number) => Promise<void>} [deps.sleep]
  */
 export function createBitBrowser(baseUrl, deps = {}) {
   const fetchImpl = deps.fetchImpl ?? fetch
   const sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const connection = deps.proxy ? { proxyMethod: 2, ...deps.proxy } : DIRECT_CONNECTION
 
   async function call(path, body = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     let reply
@@ -74,43 +60,34 @@ export function createBitBrowser(baseUrl, deps = {}) {
     health: () => call('/health'),
 
     /**
-     * Asks BitBrowser to connect through the proxy and look up the IP it
-     * exits from, before any window uses it.
-     * @param {string} proxyUrl such as http://user:pass@host:port
-     * @returns {Promise<{ip: string, country: string, city: string, timeZone: string}>} country is a two-letter code
+     * Asks BitBrowser where the configured proxy exits, before any window is
+     * opened. Without a proxy the windows use this machine's network, so this
+     * returns null.
+     * @returns {Promise<{ip: string, countryCode: string} | null>}
      */
-    async checkProxy(proxyUrl) {
-      const { host, port, proxyType, proxyUserName, proxyPassword } = bitBrowserProxy(proxyUrl)
-      const checked = await call(
-        '/checkagent',
-        { host, port, proxyType, proxyUserName, proxyPassword, ipCheckService: 'ip123in', checkExists: 0 },
-        OPEN_TIMEOUT_MS
-      )
-      const exit = checked?.data
-      if (checked?.success !== true || !exit?.ip) {
-        throw new PurchaseError(
-          'BitBrowser could not connect through the browser proxy {{proxy}}: {{error}}. ' +
-            'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
-          {
-            proxy: `${proxyType}://${host}:${port}`,
-            error: String(checked?.message ?? checked?.msg ?? 'no exit IP returned').slice(0, 300),
-          }
-        )
+    async checkProxy() {
+      if (!deps.proxy) return null
+      const reply = await call('/checkagent', {
+        ...deps.proxy,
+        ipCheckService: 'ip123in',
+        checkExists: 0,
+      })
+      // The docs nest the result one level deeper than the other replies.
+      const info = reply?.data ?? reply
+      if (info?.success === false) {
+        throw new PurchaseError('BitBrowser {{path}} failed: {{error}}', {
+          path: '/checkagent',
+          error: String(info.msg ?? 'proxy check failed').slice(0, 300),
+        })
       }
-      return {
-        ip: String(exit.ip),
-        country: String(exit.countryCode ?? '').toUpperCase(),
-        city: String(exit.city ?? ''),
-        timeZone: String(exit.timeZone ?? ''),
-      }
+      return { ip: String(info?.ip ?? ''), countryCode: String(info?.countryCode ?? '').toUpperCase() }
     },
 
     /**
-     * Creates a window with a random Windows fingerprint behind the proxy and
-     * opens it. The window is deleted again when it cannot be opened.
+     * Creates a window with a random Windows fingerprint and opens it. The
+     * window is deleted again when it cannot be opened.
      * @param {object} options
      * @param {string} options.name
-     * @param {string} options.proxyUrl
      * @param {boolean} options.headless
      * @returns {Promise<{id: string, ws: string}>} ws is the CDP endpoint of the opened browser
      */
@@ -124,17 +101,17 @@ export function createBitBrowser(baseUrl, deps = {}) {
         // Keep the buyer's session out of BitBrowser's cloud sync.
         syncTabs: false,
         syncCookies: false,
-        ...bitBrowserProxy(options.proxyUrl),
+        ...connection,
         browserFingerPrint: {
           ostype: 'PC',
           os: 'Win32',
           osVersion: '11,10',
-          // Time zone and location follow the proxy IP, and WebRTC shows the
-          // proxy IP instead of this machine's, so the site sees one place.
+          // Time zone and location follow the connection's IP, and WebRTC
+          // hides this machine's local address, so the site sees one place.
           isIpCreateTimeZone: true,
           isIpCreatePosition: true,
           webRTC: '0',
-          // Pages in English, so the selectors and messages match wherever the proxy exits.
+          // Pages in English, so the selectors and messages match wherever the browser exits.
           isIpCreateLanguage: false,
           languages: 'en-US',
           isIpCreateDisplayLanguage: false,

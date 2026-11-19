@@ -87,6 +87,8 @@ function attempt(
     plan: 'chatgptplusplan',
     status,
     current_step: current?.key ?? '',
+    card_id: 1,
+    card_label: 'DogPay #1 •••• 4242',
     operator_id: 1,
     operator_name: 'root',
     started_at: 1_800_000_000,

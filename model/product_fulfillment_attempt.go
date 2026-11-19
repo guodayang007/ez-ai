@@ -97,7 +97,12 @@ type ProductFulfillmentAttempt struct {
 	CurrentStep  string `json:"current_step" gorm:"type:varchar(32)"`
 	OperatorId   int    `json:"operator_id"`
 	OperatorName string `json:"operator_name" gorm:"type:varchar(64)"`
-	StepsJSON    string `json:"-" gorm:"column:steps;type:text"`
+	// PaymentCardId and PaymentCardLabel record the card that paid. The label
+	// is a snapshot, so the record still says which card it was after the card
+	// is deleted.
+	PaymentCardId    int    `json:"card_id" gorm:"index"`
+	PaymentCardLabel string `json:"card_label" gorm:"type:varchar(128)"`
+	StepsJSON        string `json:"-" gorm:"column:steps;type:text"`
 	// Up to productFulfillmentMaxEvents events of up to 1000 characters
 	// each, more than a MySQL text column holds.
 	EventsJSON LongText `json:"-" gorm:"column:events"`
@@ -315,6 +320,10 @@ func RecordProductFulfillmentEvent(attemptId int, tradeNo string, event ProductF
 		if finalStatus != "" {
 			updates["status"] = finalStatus
 			updates["finished_at"] = event.At
+			// The attempt is over, so its card can pay for the next order.
+			if err := releasePaymentCardLeases(tx, attempt.Id); err != nil {
+				return err
+			}
 		}
 		if err := attempt.encodeJSONColumns(); err != nil {
 			return err

@@ -33,7 +33,7 @@ func setupProductTestDB(t *testing.T) {
 	previousDB := model.DB
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.SystemTask{}, &model.Product{}, &model.ProductSku{}, &model.ProductOrder{}, &model.ProductFulfillmentAttempt{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}, &model.SystemTask{}, &model.Product{}, &model.ProductSku{}, &model.ProductOrder{}, &model.ProductFulfillmentAttempt{}, &model.PaymentCard{}))
 	model.DB = db
 	previousOptions := common.OptionMap
 	common.OptionMap = map[string]string{}
@@ -277,12 +277,28 @@ func useProductFulfillerConfig(t *testing.T, config service.ProductFulfillerConf
 
 func completeProductFulfillerConfig(url, secret string) service.ProductFulfillerConfig {
 	return service.ProductFulfillerConfig{
-		URL:          url,
-		Secret:       secret,
-		Plans:        []string{"chatgptplusplan"},
-		Card:         service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "12/30", CVC: "123", Holder: "Test Holder"},
-		BrowserProxy: "http://user:pass@proxy.example:8080",
+		URL:    url,
+		Secret: secret,
+		Plans:  []string{"chatgptplusplan"},
 	}
+}
+
+func testPtr[T any](value T) *T { return &value }
+
+// addPaymentCard puts a usable card into the pool, as the card page does.
+func addPaymentCard(t *testing.T, label string, number string) *model.PaymentCard {
+	t.Helper()
+	card, err := service.CreatePaymentCard(service.PaymentCardInput{
+		Label:    testPtr(label),
+		Provider: testPtr("dogpay"),
+		Number:   testPtr(number),
+		Expiry:   testPtr("12/30"),
+		CVC:      testPtr("123"),
+		Holder:   testPtr("Test Holder"),
+		Enabled:  testPtr(true),
+	})
+	require.NoError(t, err)
+	return card
 }
 
 func TestProductFulfillmentStatusExplainsSetupProblems(t *testing.T) {
@@ -303,25 +319,30 @@ func TestProductFulfillmentStatusExplainsSetupProblems(t *testing.T) {
 	stopped.Close()
 
 	tests := []struct {
-		name   string
-		key    string
-		config *service.ProductFulfillerConfig
-		want   string
+		name     string
+		key      string
+		config   *service.ProductFulfillerConfig
+		withCard bool
+		want     string
 	}{
 		{name: "no encryption key", want: `{"status":"key_missing","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
-		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"","missing":["url","secret","plans","card_number","card_expiry","card_cvc","card_holder","browser_proxy"]}`},
-		{name: "card missing", key: productTestEncryptionKey, config: &service.ProductFulfillerConfig{URL: fulfiller.URL, Secret: secret, Plans: []string{"chatgptplusplan"}}, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":["card_number","card_expiry","card_cvc","card_holder","browser_proxy"]}`},
-		{name: "saved under another key", key: "another-config-encryption-key-0123456789", config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"config_unreadable","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
-		{name: "service not running", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(stoppedURL, secret)), want: `{"status":"unreachable","plans":[],"claude_plans":[],"service_url":"` + stoppedURL + `","missing":[]}`},
-		{name: "secret differs from the service", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, strings.Repeat("x", 32))), want: `{"status":"unauthorized","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":[]}`},
-		{name: "ready", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"ok","plans":["chatgptplusplan"],"claude_plans":["claude_pro","claude_max_5x","claude_max_20x"],"service_url":"` + fulfiller.URL + `","missing":[]}`},
+		{name: "nothing saved", key: productTestEncryptionKey, want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"","missing":["url","secret","plans","cards"]}`},
+		{name: "no card in the pool", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), want: `{"status":"not_configured","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":["cards"]}`},
+		{name: "saved under another key", key: "another-config-encryption-key-0123456789", config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), withCard: true, want: `{"status":"config_unreadable","plans":[],"claude_plans":[],"service_url":"","missing":[]}`},
+		{name: "service not running", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(stoppedURL, secret)), withCard: true, want: `{"status":"unreachable","plans":[],"claude_plans":[],"service_url":"` + stoppedURL + `","missing":[]}`},
+		{name: "secret differs from the service", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, strings.Repeat("x", 32))), withCard: true, want: `{"status":"unauthorized","plans":[],"claude_plans":[],"service_url":"` + fulfiller.URL + `","missing":[]}`},
+		{name: "ready", key: productTestEncryptionKey, config: new(completeProductFulfillerConfig(fulfiller.URL, secret)), withCard: true, want: `{"status":"ok","plans":["chatgptplusplan"],"claude_plans":["claude_pro","claude_max_5x","claude_max_20x"],"service_url":"` + fulfiller.URL + `","missing":[]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			useProductFulfillerConfig(t, service.ProductFulfillerConfig{})
 			system_setting.ProductFulfillerConfig = ""
+			require.NoError(t, model.DB.Where("1 = 1").Delete(&model.PaymentCard{}).Error)
 			if tt.config != nil {
 				require.NoError(t, service.SaveProductFulfillerConfig(*tt.config))
+			}
+			if tt.withCard {
+				addPaymentCard(t, "DogPay #1", "4242424242424242")
 			}
 			common.ConfigEncryptionKey = tt.key
 
@@ -339,55 +360,67 @@ func TestProductFulfillmentConfigIsStoredEncrypted(t *testing.T) {
 
 	saved := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{
 		"url":"http://127.0.0.1:3100/","secret":"`+secret+`","plans":["chatgptplusplan"," chatgptplusplan","chatgptproplan"],
-		"card_number":"4242 4242 4242 4242","card_expiry":"12/30","card_cvc":"123","card_holder":"Test Holder",
-		"billing":{"country":"us","currency":"usd","city":"Austin"},"browser_proxy":"http://user:pass@proxy:8080"}`)
+		"billing":{"country":"us","currency":"usd","city":"Austin"}}`)
 	require.True(t, saved.Success, saved.Message)
 	var view map[string]any
 	require.NoError(t, common.Unmarshal(saved.Data, &view))
 	assert.Equal(t, "http://127.0.0.1:3100", view["url"])
 	assert.Equal(t, []any{"chatgptplusplan", "chatgptproplan"}, view["plans"])
-	assert.Equal(t, "4242", view["card_last4"])
 	assert.Equal(t, true, view["has_secret"])
-	assert.Equal(t, true, view["has_card_cvc"])
-	assert.Equal(t, true, view["has_browser_proxy"])
 	assert.Equal(t, map[string]any{"country": "US", "currency": "USD", "line1": "", "city": "Austin", "state": "", "postal_code": ""}, view["billing"])
 	assert.NotContains(t, string(saved.Data), secret, "the secret is never sent back")
-	assert.NotContains(t, string(saved.Data), "4242424242424242", "the card number is never sent back")
-	assert.NotContains(t, string(saved.Data), "pass@", "the proxy credentials are never sent back")
 
 	var stored model.Option
 	require.NoError(t, model.DB.Where(&model.Option{Key: system_setting.ProductFulfillerConfigOption}).First(&stored).Error)
 	assert.True(t, strings.HasPrefix(stored.Value, "enc:v1:"))
-	for _, plain := range []string{secret, "4242424242424242", "Test Holder", "chatgptplusplan", "Austin"} {
+	for _, plain := range []string{secret, "chatgptplusplan", "Austin"} {
 		assert.NotContains(t, stored.Value, plain, "the database holds no plain text")
 	}
 
-	// Leaving the secrets out keeps them; an empty proxy clears it.
+	// Leaving the secret out keeps it.
 	kept := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{
-		"url":"http://127.0.0.1:3100","plans":["chatgptplusplan"],"card_expiry":"01/31","card_holder":"Test Holder","browser_proxy":""}`)
+		"url":"http://127.0.0.1:3100","plans":["chatgptplusplan"]}`)
 	require.True(t, kept.Success, kept.Message)
 	config, err := service.LoadProductFulfillerConfig()
 	require.NoError(t, err)
 	assert.Equal(t, secret, config.Secret)
-	assert.Equal(t, service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "01/31", CVC: "123", Holder: "Test Holder"}, config.Card)
-	assert.Empty(t, config.BrowserProxy)
 
-	invalid := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"card_number":"1234","plans":[]}`)
-	assert.Equal(t, "The card number must be 12-19 digits", invalid.Message)
+	invalid := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"url":"ftp://fulfiller","plans":[]}`)
+	assert.Equal(t, "Provide a valid URL starting with http:// or https://", invalid.Message)
 	unchanged, err := service.LoadProductFulfillerConfig()
 	require.NoError(t, err)
 	assert.Equal(t, config, unchanged, "a rejected save keeps the stored settings")
 
-	for proxy, message := range map[string]string{
-		"ftp://proxy:21": "Provide a valid proxy URL such as http://user:pass@host:port",
-		"proxy:8080":     "Provide a valid proxy URL such as http://user:pass@host:port",
-	} {
-		rejected := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"`+proxy+`"}`)
-		assert.Equal(t, message, rejected.Message, proxy)
-	}
-	// BitBrowser signs in to SOCKS5 proxies too.
-	accepted := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"browser_proxy":"socks5://user:pass@proxy:1080"}`)
-	require.True(t, accepted.Success, accepted.Message)
+	// Cards are stored in the pool, encrypted, and never returned with their numbers.
+	cardBody := `{"label":"DogPay #1","provider":"dogpay","number":"4242 4242 4242 4242","expiry":"12/30","cvc":"123","holder":"Test Holder","enabled":true}`
+	added := callProductHandler(t, AdminCreatePaymentCard, 1, 0, cardBody)
+	require.True(t, added.Success, added.Message)
+	assert.NotContains(t, string(added.Data), "4242424242424242", "the card number is never sent back")
+	assert.NotContains(t, string(added.Data), "123", "the CVC is never sent back")
+	var addedView map[string]any
+	require.NoError(t, common.Unmarshal(added.Data, &addedView))
+	assert.Equal(t, "4242", addedView["last4"])
+	assert.Equal(t, "visa", addedView["brand"])
+	assert.Equal(t, "ready", addedView["status"])
+	var storedCard model.PaymentCard
+	require.NoError(t, model.DB.First(&storedCard).Error)
+	assert.True(t, strings.HasPrefix(storedCard.NumberEncrypted, "enc:v1:"))
+	assert.NotContains(t, storedCard.NumberEncrypted, "4242424242424242", "the database holds no plain card number")
+	assert.NotContains(t, storedCard.CVCEncrypted, "123")
+
+	duplicate := callProductHandler(t, AdminCreatePaymentCard, 1, 0, cardBody)
+	assert.Equal(t, "This card is already in the pool", duplicate.Message)
+	tooShort := callProductHandler(t, AdminCreatePaymentCard, 1, 0, `{"label":"x","provider":"dogpay","number":"1234","expiry":"12/30","cvc":"123","holder":"H"}`)
+	assert.Equal(t, "The card number must be 12-19 digits", tooShort.Message)
+	badProvider := callProductHandler(t, AdminCreatePaymentCard, 1, 0, `{"label":"x","provider":"stripe","number":"5555555555554444","expiry":"12/30","cvc":"123","holder":"H"}`)
+	assert.Equal(t, "The provider must be dogpay, virtual, physical or other", badProvider.Message)
+	disabled := callProductHandler(t, AdminUpdatePaymentCard, 1, storedCard.Id, `{"enabled":false}`)
+	require.True(t, disabled.Success, disabled.Message)
+	assert.Contains(t, string(disabled.Data), `"status":"disabled"`)
+	relabelled := callProductHandler(t, AdminUpdatePaymentCard, 1, storedCard.Id, `{"enabled":true,"label":"Renamed"}`)
+	require.True(t, relabelled.Success, relabelled.Message)
+	assert.Contains(t, string(relabelled.Data), `"label":"Renamed"`)
+	assert.Contains(t, string(relabelled.Data), `"status":"ready"`)
 
 	common.ConfigEncryptionKey = ""
 	noKey := callProductHandler(t, AdminUpdateProductFulfillmentConfig, 1, 0, `{"plans":[]}`)
@@ -441,6 +474,7 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	config.CallbackURL = "https://ez-ai.test/api/product/fulfillment/callback"
 	config.Billing = service.ProductFulfillerBilling{City: "Austin"}
 	useProductFulfillerConfig(t, config)
+	card := addPaymentCard(t, "DogPay #1", "4242424242424242")
 
 	product := &model.Product{
 		Title:       "ChatGPT",
@@ -550,17 +584,18 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, model.ProductFulfillmentStepSucceeded, stepOf(running, model.ProductFulfillmentStepSubmit).Status)
 	assert.Equal(t, "The fulfillment service accepted the job", stepOf(running, model.ProductFulfillmentStepSubmit).Message)
 	assert.Equal(t, model.ProductFulfillmentStepRunning, stepOf(running, model.ProductFulfillmentStepQueue).Status)
+	assert.Equal(t, card.Id, running.PaymentCardId, "the payment record names the card that pays")
+	assert.Equal(t, "DogPay #1 •••• 4242", running.PaymentCardLabel, "the record keeps the card's label and last four digits")
 	assert.Equal(t, service.ProductFulfillmentJob{
-		TradeNo:      order.TradeNo,
-		AttemptId:    running.Id,
-		Provider:     service.ProductFulfillmentProviderChatGPT,
-		Plan:         "chatgptplusplan",
-		AccessToken:  token,
-		CallbackURL:  "https://ez-ai.test/api/product/fulfillment/callback",
-		Card:         config.Card,
-		Billing:      service.ProductFulfillerBilling{Country: "US", Currency: "USD", City: "Austin"},
-		BrowserProxy: config.BrowserProxy,
-	}, received[1], "the job carries the card, the billing address with default country and currency, and the proxy")
+		TradeNo:     order.TradeNo,
+		AttemptId:   running.Id,
+		Provider:    service.ProductFulfillmentProviderChatGPT,
+		Plan:        "chatgptplusplan",
+		AccessToken: token,
+		CallbackURL: "https://ez-ai.test/api/product/fulfillment/callback",
+		Card:        service.ProductFulfillerCard{Number: "4242424242424242", Expiry: "12/30", CVC: "123", Holder: "Test Holder"},
+		Billing:     service.ProductFulfillerBilling{Country: "US", Currency: "USD", City: "Austin"},
+	}, received[1], "the job carries the card and the billing address with default country and currency")
 
 	again := callProductHandler(t, AdminExecuteProductOrderPayment, 1, order.Id, payPlus)
 	assert.Equal(t, "Automatic payment is already running for this order", again.Message, "a running purchase cannot be started twice")
@@ -622,12 +657,19 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 	assert.Equal(t, model.ProductFulfillmentRunning, stored.FulfillmentStatus, "an earlier attempt's result does not finish the new one")
 
 	failed := `{"trade_no":"` + order.TradeNo + `","attempt_id":` + strconv.Itoa(records[0].Id) +
-		`,"success":false,"step":"confirm_payment","message":"Checkout rejected the payment: declined","message_key":"Checkout rejected the payment: {{reason}}","params":{"reason":"declined"}}`
+		`,"success":false,"card_outcome":"declined","step":"confirm_payment","message":"Checkout rejected the payment: declined","message_key":"Checkout rejected the payment: {{reason}}","params":{"reason":"declined"}}`
 	assert.Equal(t, http.StatusOK, callback(failed, true))
 	stored, err = model.GetProductOrder(order.Id)
 	require.NoError(t, err)
 	assert.Equal(t, model.ProductFulfillmentFailed, stored.FulfillmentStatus)
 	assert.Equal(t, "Checkout rejected the payment: declined", stored.FulfillmentMessage)
+	declined, err := model.GetPaymentCard(card.Id)
+	require.NoError(t, err)
+	assert.False(t, declined.Enabled, "a declined card is switched off until an admin turns it on again")
+	assert.Equal(t, model.PaymentCardDisabledDeclined, declined.DisabledReason)
+	assert.Equal(t, 0, declined.LeasedAttemptId, "the card is released when the attempt ends")
+	assert.Equal(t, 1, declined.SuccessCount, "the earlier successful purchase is counted")
+	assert.Equal(t, 1, declined.FailCount)
 	last := attempts(order.Id)[0]
 	assert.Equal(t, model.ProductFulfillmentFailed, last.Status)
 	assert.Equal(t, model.ProductFulfillmentStepConfirm, last.CurrentStep)
@@ -663,8 +705,11 @@ func TestProductOrderAutomaticFulfillment(t *testing.T) {
 
 	chatgptPlan := callProductHandler(t, AdminExecuteProductOrderPayment, 1, claudeOrder.Id, payPlus)
 	assert.Equal(t, "The fulfillment service does not offer this plan", chatgptPlan.Message, "a Claude order only takes Claude plans")
+	// The declined card is skipped, so the admin's second card pays.
+	second := addPaymentCard(t, "DogPay #2", "5555555555554444")
 	paid := callProductHandler(t, AdminExecuteProductOrderPayment, 1, claudeOrder.Id, `{"plan":"claude_max_5x"}`)
 	require.True(t, paid.Success, paid.Message)
+	assert.Equal(t, second.Id, attempts(claudeOrder.Id)[0].PaymentCardId, "a declined card is not used again")
 	claudeJob := received[len(received)-1]
 	assert.Equal(t, service.ProductFulfillmentProviderClaude, claudeJob.Provider)
 	assert.Equal(t, "claude_max_5x", claudeJob.Plan)
@@ -698,4 +743,91 @@ func TestVerifyProductFulfillerSignature(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// TestPaymentCardPoolChoosesAndHoldsCards covers which card pays: a random
+// usable card, a card held by a running purchase is skipped, and the card is
+// free again once the purchase ends.
+func TestPaymentCardPoolChoosesAndHoldsCards(t *testing.T) {
+	setupProductTestDB(t)
+	useProductFulfillerConfig(t, service.ProductFulfillerConfig{})
+	now := time.Now()
+
+	first := addPaymentCard(t, "first", "4242424242424242")
+	second := addPaymentCard(t, "second", "5555555555554444")
+	disabledCard := addPaymentCard(t, "off", "6011111111111117")
+	require.NoError(t, model.UpdatePaymentCard(disabledCard.Id, map[string]any{"enabled": false}))
+	expired := addPaymentCard(t, "old", "4111111111111111")
+	require.NoError(t, model.UpdatePaymentCard(expired.Id, map[string]any{"expiry_year": now.Year() - 1}))
+
+	attemptA := model.ProductFulfillmentAttempt{TradeNo: "PO-A", Status: model.ProductFulfillmentRunning, StepsJSON: "[]"}
+	attemptB := model.ProductFulfillmentAttempt{TradeNo: "PO-B", Status: model.ProductFulfillmentRunning, StepsJSON: "[]"}
+	require.NoError(t, model.DB.Create(&attemptA).Error)
+	require.NoError(t, model.DB.Create(&attemptB).Error)
+
+	picked, err := model.LeasePaymentCard(attemptA.Id, 0, now)
+	require.NoError(t, err)
+	assert.Contains(t, []int{first.Id, second.Id}, picked.Id, "a random usable card pays")
+	other := second.Id
+	if picked.Id == second.Id {
+		other = first.Id
+	}
+	picked, err = model.LeasePaymentCard(attemptB.Id, 0, now)
+	require.NoError(t, err)
+	assert.Equal(t, other, picked.Id, "a card held by another purchase is skipped")
+
+	_, err = model.LeasePaymentCard(attemptB.Id, other, now)
+	assert.ErrorIs(t, err, model.ErrPaymentCardUnavailable, "a chosen card that is in use is refused")
+	_, err = model.LeasePaymentCard(attemptB.Id, disabledCard.Id, now)
+	assert.ErrorIs(t, err, model.ErrPaymentCardUnavailable, "a switched-off card is refused")
+	_, err = model.LeasePaymentCard(attemptB.Id, expired.Id, now)
+	assert.ErrorIs(t, err, model.ErrPaymentCardUnavailable, "an expired card is refused")
+	assert.ErrorIs(t, model.DeletePaymentCard(other), model.ErrPaymentCardInUse, "a card paying for an order cannot be deleted")
+
+	// Ending attempt B frees its card; the next purchase can choose it again.
+	require.NoError(t, model.RecordProductFulfillmentEvent(attemptB.Id, attemptB.TradeNo,
+		model.NewProductFulfillmentEvent(model.ProductFulfillmentStepComplete, model.ProductFulfillmentStepSucceeded, "done", nil),
+		model.ProductFulfillmentSucceeded))
+	released, err := model.GetPaymentCard(other)
+	require.NoError(t, err)
+	assert.Equal(t, 0, released.LeasedAttemptId)
+	assert.Equal(t, model.PaymentCardStatusReady, released.Status(now))
+	picked, err = model.LeasePaymentCard(attemptB.Id, other, now)
+	require.NoError(t, err)
+	assert.Equal(t, other, picked.Id)
+}
+
+// TestLegacyFulfillerCardMovesIntoThePool moves the card an older version kept
+// in the fulfiller settings into the pool, once.
+func TestLegacyFulfillerCardMovesIntoThePool(t *testing.T) {
+	setupProductTestDB(t)
+	useProductFulfillerConfig(t, service.ProductFulfillerConfig{})
+	const secret = "0123456789abcdef0123456789abcdef"
+	legacy := `{"url":"http://127.0.0.1:3100","secret":"` + secret + `","plans":["chatgptplusplan"],` +
+		`"card":{"number":"4242424242424242","expiry":"12/30","cvc":"123","holder":"Test Holder"}}`
+	sealed, err := common.EncryptConfigValue([]byte(legacy))
+	require.NoError(t, err)
+	system_setting.ProductFulfillerConfig = sealed
+
+	require.NoError(t, service.ImportLegacyProductFulfillerCard())
+	cards, err := model.ListPaymentCards()
+	require.NoError(t, err)
+	require.Len(t, cards, 1)
+	assert.Equal(t, "DogPay", cards[0].Label)
+	assert.Equal(t, "4242", cards[0].Last4)
+
+	config, err := service.LoadProductFulfillerConfig()
+	require.NoError(t, err)
+	assert.Equal(t, secret, config.Secret, "the other settings are kept")
+	var rewritten map[string]any
+	plaintext, err := common.DecryptConfigValue(system_setting.ProductFulfillerConfig)
+	require.NoError(t, err)
+	require.NoError(t, common.Unmarshal(plaintext, &rewritten))
+	assert.NotContains(t, rewritten, "card", "the settings no longer hold the card")
+
+	// A second start finds nothing to move and does not duplicate the card.
+	require.NoError(t, service.ImportLegacyProductFulfillerCard())
+	count, err := model.CountPaymentCards()
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, count)
 }

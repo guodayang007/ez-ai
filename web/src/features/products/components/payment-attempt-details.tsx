@@ -108,6 +108,10 @@ export function PaymentAttemptDetails(props: PaymentAttemptDetailsProps) {
       value: <span className='font-mono'>{attempt.plan}</span>,
     },
     {
+      label: t('Card'),
+      value: attempt.card_label || '-',
+    },
+    {
       label: t('Started by'),
       value: attempt.operator_name || `ID ${attempt.operator_id}`,
     },

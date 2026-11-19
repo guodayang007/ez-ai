@@ -532,6 +532,8 @@ func AdminUpdateProductOrder(c *gin.Context) {
 
 type productExecutePaymentRequest struct {
 	Plan string `json:"plan"`
+	// CardId is the pooled card to pay with; 0 lets ez-ai choose.
+	CardId int `json:"card_id"`
 }
 
 // AdminExecuteProductOrderPayment starts the automatic purchase of an order
@@ -607,6 +609,23 @@ func AdminExecuteProductOrderPayment(c *gin.Context) {
 			if msg := validateChatGPTSession(order.Inputs[field.Key], time.Now()); msg != "" {
 				failCheck = msg
 				break
+			}
+		}
+	}
+	// The card is held from here on; every failure below ends the attempt,
+	// which releases it.
+	if failCheck == "" {
+		card, err := model.LeasePaymentCard(attempt.Id, req.CardId, time.Now())
+		switch {
+		case errors.Is(err, model.ErrPaymentCardUnavailable):
+			failCheck = "No payment card is ready for this purchase"
+		case err != nil:
+			common.SysError(common.LogText("failed to choose a payment card for product order %s: %s", order.TradeNo, err.Error()))
+			failCheck = "Unexpected error while choosing a payment card"
+		default:
+			job.Card, err = service.DecryptPaymentCard(card)
+			if err != nil {
+				failCheck = "The payment card cannot be read with the current CONFIG_ENCRYPTION_KEY"
 			}
 		}
 	}
@@ -688,7 +707,11 @@ const productFulfillmentCallbackProgress = "progress"
 // the final result (any other type) of a purchase. MessageKey and Params are
 // the translatable form of Message.
 type productFulfillmentCallbackRequest struct {
-	Type         string            `json:"type"`
+	Type string `json:"type"`
+	// CardOutcome says what the purchase tells about the card: success,
+	// declined, needs_verification or failed. Empty when the fulfiller does
+	// not know; the success flag is used then.
+	CardOutcome  string            `json:"card_outcome"`
 	TradeNo      string            `json:"trade_no"`
 	AttemptId    int               `json:"attempt_id"`
 	Step         string            `json:"step"`
@@ -787,6 +810,10 @@ func ProductFulfillmentCallback(c *gin.Context) {
 		if err != nil && !errors.Is(err, model.ErrProductOrderStatusConflict) && !errors.Is(err, gorm.ErrRecordNotFound) {
 			common.SysError(common.LogText("failed to record payment step %s of product order %s: %s", event.Step, req.TradeNo, err.Error()))
 		}
+		// Counted once: a replayed result finds the attempt already ended.
+		if err == nil {
+			recordPaymentCardOutcome(attemptId, req)
+		}
 	}
 
 	if orderChanged {
@@ -797,6 +824,23 @@ func ProductFulfillmentCallback(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// recordPaymentCardOutcome counts the purchase's result on the card that paid.
+// A failure without a card_outcome says nothing about the card (an expired
+// session, for example), so it is not counted. Failing to count is logged;
+// the payment record is already final.
+func recordPaymentCardOutcome(attemptId int, req productFulfillmentCallbackRequest) {
+	outcome := req.CardOutcome
+	if req.Success {
+		outcome = model.PaymentCardOutcomeSuccess
+	}
+	if outcome == "" {
+		return
+	}
+	if err := model.RecordPaymentCardOutcome(attemptId, outcome); err != nil {
+		common.SysError(common.LogText("failed to count the result of payment card of attempt %d: %s", attemptId, err.Error()))
+	}
 }
 
 func truncateRunes(value string, max int) string {

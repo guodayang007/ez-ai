@@ -21,6 +21,30 @@ export function loadConfig(env) {
     problems.push('BITBROWSER_URL must be the BitBrowser Local API address, such as http://127.0.0.1:54345')
   }
 
+  // Optional proxy for the purchase windows. Its exit must be in the billing
+  // country, so the browser can check out from there.
+  const proxyType = read('BITBROWSER_PROXY_TYPE').toLowerCase()
+  let bitBrowserProxy = null
+  if (proxyType) {
+    const proxyPort = Number.parseInt(read('BITBROWSER_PROXY_PORT'), 10)
+    if (!BITBROWSER_PROXY_TYPES.includes(proxyType)) {
+      problems.push(`BITBROWSER_PROXY_TYPE must be one of ${BITBROWSER_PROXY_TYPES.join(', ')}`)
+    }
+    if (!read('BITBROWSER_PROXY_HOST')) {
+      problems.push('BITBROWSER_PROXY_HOST is required when BITBROWSER_PROXY_TYPE is set')
+    }
+    if (!Number.isInteger(proxyPort) || proxyPort <= 0 || proxyPort > 65535) {
+      problems.push('BITBROWSER_PROXY_PORT must be a valid port number when BITBROWSER_PROXY_TYPE is set')
+    }
+    bitBrowserProxy = {
+      proxyType,
+      host: read('BITBROWSER_PROXY_HOST'),
+      port: proxyPort,
+      proxyUserName: read('BITBROWSER_PROXY_USERNAME'),
+      proxyPassword: read('BITBROWSER_PROXY_PASSWORD'),
+    }
+  }
+
   if (problems.length > 0) {
     throw new Error(`Invalid configuration:\n- ${problems.join('\n- ')}`)
   }
@@ -31,5 +55,9 @@ export function loadConfig(env) {
     secret,
     headless: read('HEADLESS', 'true').toLowerCase() !== 'false',
     bitBrowserUrl,
+    bitBrowserProxy,
   }
 }
+
+// Proxy types BitBrowser accepts for a window (its "proxyType" field).
+export const BITBROWSER_PROXY_TYPES = ['http', 'https', 'socks5', 'ssh']

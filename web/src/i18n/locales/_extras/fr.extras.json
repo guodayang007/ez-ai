@@ -1,0 +1,4 @@
+{
+  "translation.Automatic charges the ready card with the lowest priority number. Cards that are in use, disabled or expired cannot be chosen.": "Automatique utilise la carte prête au numéro de priorité le plus bas. Les cartes en cours d'utilisation, désactivées ou expirées ne peuvent pas être choisies.",
+  "translation.Cards are charged in priority order (lower number first) when a payment runs automatically.": "Lors d'un paiement automatique, les cartes sont utilisées par ordre de priorité (numéro le plus bas en premier)."
+}

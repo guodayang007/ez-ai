@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type { StatusBadgeProps } from '@/components/status-badge'
 
 import type {
+  ProductFulfillmentCardProvider,
+  ProductFulfillmentCardStatus,
   ProductFulfillmentStatus,
   ProductFulfillmentStepKey,
   ProductFulfillmentStepStatus,
@@ -33,6 +35,7 @@ export const PRODUCT_QUERY_KEYS = {
   selfOrders: ['self-product-orders'] as const,
   fulfillerHealth: ['product-fulfiller-health'] as const,
   fulfillerConfig: ['product-fulfiller-config'] as const,
+  fulfillmentCards: ['product-fulfillment-cards'] as const,
   fulfillmentAttempts: ['product-fulfillment-attempts'] as const,
 }
 
@@ -73,6 +76,27 @@ export const PRODUCT_FULFILLMENT_STATUSES: Record<
   running: { labelKey: 'Paying', variant: 'blue' },
   succeeded: { labelKey: 'Paid automatically', variant: 'success' },
   failed: { labelKey: 'Payment failed', variant: 'danger' },
+}
+
+// labelKey values are i18n keys; render them with t(config.labelKey).
+export const PRODUCT_FULFILLMENT_CARD_PROVIDERS: Array<{
+  value: ProductFulfillmentCardProvider
+  labelKey: string
+}> = [
+  { value: 'dogpay', labelKey: 'DogPay virtual card' },
+  { value: 'virtual', labelKey: 'Other virtual card' },
+  { value: 'physical', labelKey: 'Physical card' },
+  { value: 'other', labelKey: 'Other' },
+]
+
+export const PRODUCT_FULFILLMENT_CARD_STATUSES: Record<
+  ProductFulfillmentCardStatus,
+  Pick<StatusBadgeProps, 'variant'> & { labelKey: string }
+> = {
+  ready: { labelKey: 'Ready', variant: 'success' },
+  in_use: { labelKey: 'In use', variant: 'blue' },
+  disabled: { labelKey: 'Disabled', variant: 'neutral' },
+  expired: { labelKey: 'Expired', variant: 'danger' },
 }
 
 // Mirrors ProductFulfillmentSteps in model/product_fulfillment_attempt.go.

@@ -29,7 +29,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import * as api from '../../api'
-import type { ProductFulfillerHealth, ProductOrder } from '../../types'
+import type {
+  ProductFulfillerHealth,
+  ProductFulfillmentCard,
+  ProductOrder,
+} from '../../types'
 import { OrderPaymentDialog } from '../order-payment-dialog'
 
 const paidOrder: ProductOrder = {
@@ -73,7 +77,48 @@ function mockHealth(...responses: ProductFulfillerHealth[]) {
   return spy
 }
 
+const poolCards: ProductFulfillmentCard[] = [
+  {
+    id: 1,
+    label: 'DogPay #1',
+    provider: 'dogpay',
+    brand: 'Visa',
+    last4: '4242',
+    expiry_month: 12,
+    expiry_year: 2030,
+    holder: 'Test Holder',
+    enabled: true,
+    priority: 10,
+    status: 'ready',
+    disabled_reason: '',
+    last_used_at: 0,
+    success_count: 0,
+    fail_count: 0,
+  },
+  {
+    id: 2,
+    label: 'Old card',
+    provider: 'other',
+    brand: 'Mastercard',
+    last4: '5555',
+    expiry_month: 1,
+    expiry_year: 2031,
+    holder: 'Test Holder',
+    enabled: true,
+    priority: 20,
+    status: 'in_use',
+    disabled_reason: '',
+    last_used_at: 0,
+    success_count: 0,
+    fail_count: 0,
+  },
+]
+
 function renderDialog() {
+  vi.spyOn(api, 'getProductFulfillmentCards').mockResolvedValue({
+    success: true,
+    data: poolCards,
+  })
   const onOpenChange = vi.fn()
   const onStarted = vi.fn()
   const root = createRootRoute()
@@ -119,7 +164,7 @@ describe('order payment dialog', () => {
         status: 'not_configured',
         plans: [],
         service_url: '',
-        missing: ['url', 'card_number', 'browser_proxy'],
+        missing: ['url', 'cards'],
       })
     )
     const { router, onOpenChange } = renderDialog()
@@ -129,7 +174,7 @@ describe('order payment dialog', () => {
     ).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Fill in: Fulfillment service URL, Card number, Browser proxy'
+        'Fill in: Fulfillment service URL, A ready card in the card pool'
       )
     ).toBeInTheDocument()
     const main = screen.getByRole('button', {
@@ -161,7 +206,7 @@ describe('order payment dialog', () => {
       screen.getByText('cd services/dogpay-fulfiller && node src/server.mjs')
     ).toBeInTheDocument()
     expect(
-      screen.queryByRole('button', { name: 'Pay with DogPay' })
+      screen.queryByRole('button', { name: 'Pay with card' })
     ).not.toBeInTheDocument()
 
     expect(
@@ -171,7 +216,7 @@ describe('order payment dialog', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Check again' }))
 
     expect(
-      await screen.findByRole('button', { name: 'Pay with DogPay' })
+      await screen.findByRole('button', { name: 'Pay with card' })
     ).toBeEnabled()
     expect(spy).toHaveBeenCalledTimes(2)
   })
@@ -184,11 +229,31 @@ describe('order payment dialog', () => {
     const { onStarted } = renderDialog()
 
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Pay with DogPay' })
+      await screen.findByRole('button', { name: 'Pay with card' })
     )
 
-    expect(pay).toHaveBeenCalledWith(3, 'chatgptplusplan')
+    expect(pay).toHaveBeenCalledWith(3, 'chatgptplusplan', 0)
     await waitFor(() => expect(onStarted).toHaveBeenCalledWith(paidOrder))
+  })
+
+  test('the card choice explains which cards cannot pay and sends the card picked', async () => {
+    mockHealth(health({}))
+    const pay = vi
+      .spyOn(api, 'executeProductOrderPayment')
+      .mockResolvedValue({ success: true })
+    renderDialog()
+
+    await userEvent.click(await screen.findByLabelText('Card'))
+    const busy = await screen.findByRole('option', {
+      name: 'Old card •••• 5555 · In use',
+    })
+    expect(busy).toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(
+      screen.getByRole('option', { name: 'DogPay #1 •••• 4242' })
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Pay with card' }))
+
+    expect(pay).toHaveBeenCalledWith(3, 'chatgptplusplan', 1)
   })
 
   test('when the fulfiller refuses the payment, the order is not handed over', async () => {
@@ -200,7 +265,7 @@ describe('order payment dialog', () => {
     const { onStarted, onOpenChange } = renderDialog()
 
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Pay with DogPay' })
+      await screen.findByRole('button', { name: 'Pay with card' })
     )
 
     await waitFor(() =>

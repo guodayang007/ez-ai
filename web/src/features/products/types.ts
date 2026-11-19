@@ -149,6 +149,10 @@ export type ProductFulfillmentAttempt = {
   plan: string
   status: ProductFulfillmentStatus
   current_step: ProductFulfillmentStepKey | ''
+  /** The card of the pool that paid; 0 for attempts made before the pool. */
+  card_id: number
+  /** The card's label and last four digits, e.g. "DogPay #1 •••• 1234". */
+  card_label: string
   operator_id: number
   operator_name: string
   started_at: number
@@ -172,15 +176,7 @@ export type ProductFulfillerState =
   | 'error'
 
 /** A fulfiller setting that must be filled in before payments can run. */
-export type ProductFulfillerField =
-  | 'url'
-  | 'secret'
-  | 'plans'
-  | 'card_number'
-  | 'card_expiry'
-  | 'card_cvc'
-  | 'card_holder'
-  | 'browser_proxy'
+export type ProductFulfillerField = 'url' | 'secret' | 'plans' | 'cards'
 
 export type ProductFulfillerHealth = {
   status: ProductFulfillerState
@@ -213,12 +209,7 @@ export type ProductFulfillmentConfigView = {
   default_callback_url: string
   plans: string[]
   has_secret: boolean
-  card_last4: string
-  card_expiry: string
-  has_card_cvc: boolean
-  card_holder: string
   billing: ProductFulfillerBilling
-  has_browser_proxy: boolean
 }
 
 /** Secret fields left out keep the saved value; an empty string clears it. */
@@ -226,13 +217,66 @@ export type ProductFulfillmentConfigUpdate = {
   url: string
   callback_url: string
   plans: string[]
-  card_expiry: string
-  card_holder: string
   billing: ProductFulfillerBilling
   secret?: string
-  card_number?: string
-  card_cvc?: string
-  browser_proxy?: string
+}
+
+export type ProductFulfillmentCardProvider =
+  | 'dogpay'
+  | 'virtual'
+  | 'physical'
+  | 'other'
+
+/**
+ * ready: can pay. in_use: a payment is charging it now. disabled: switched
+ * off, or declined by the bank (see disabled_reason). expired: past its
+ * expiry month.
+ */
+export type ProductFulfillmentCardStatus =
+  | 'ready'
+  | 'in_use'
+  | 'disabled'
+  | 'expired'
+
+/** Why a card is disabled: switched off by an admin, or declined by the bank. */
+export type ProductFulfillmentCardDisabledReason = '' | 'manual' | 'declined'
+
+/**
+ * A card in the payment pool as the server returns it. The number and CVC
+ * are write-only: only the brand and last four digits are ever shown.
+ */
+export type ProductFulfillmentCard = {
+  id: number
+  label: string
+  provider: ProductFulfillmentCardProvider
+  brand: string
+  last4: string
+  expiry_month: number
+  expiry_year: number
+  holder: string
+  enabled: boolean
+  priority: number
+  status: ProductFulfillmentCardStatus
+  disabled_reason: ProductFulfillmentCardDisabledReason
+  /** Unix seconds; 0 when the card has never paid. */
+  last_used_at: number
+  success_count: number
+  fail_count: number
+}
+
+/**
+ * Create and update payloads. On update number and cvc are only replaced
+ * when sent non-empty.
+ */
+export type ProductFulfillmentCardInput = {
+  label: string
+  provider: ProductFulfillmentCardProvider
+  number?: string
+  expiry: string
+  cvc?: string
+  holder: string
+  priority: number
+  enabled: boolean
 }
 
 export type ApiResponse<T = unknown> = {

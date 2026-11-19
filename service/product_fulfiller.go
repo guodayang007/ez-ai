@@ -63,12 +63,9 @@ const (
 var ProductFulfillerClaudePlans = []string{"claude_pro", "claude_max_5x", "claude_max_20x"}
 
 var (
-	productFulfillerPlanPattern       = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
-	productFulfillerCardNumberPattern = regexp.MustCompile(`^\d{12,19}$`)
-	productFulfillerCardExpiryPattern = regexp.MustCompile(`^(0[1-9]|1[0-2])/\d{2}$`)
-	productFulfillerCardCVCPattern    = regexp.MustCompile(`^\d{3,4}$`)
-	productFulfillerCountryPattern    = regexp.MustCompile(`^[A-Z]{2}$`)
-	productFulfillerCurrencyPattern   = regexp.MustCompile(`^[A-Z]{3}$`)
+	productFulfillerPlanPattern     = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+	productFulfillerCountryPattern  = regexp.MustCompile(`^[A-Z]{2}$`)
+	productFulfillerCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 )
 
 type ProductFulfillerCard struct {
@@ -88,15 +85,14 @@ type ProductFulfillerBilling struct {
 }
 
 // ProductFulfillerConfig is everything the fulfiller needs: where it runs,
-// the shared secret, the plans it may buy and the card it pays with.
+// the shared secret, the plans it may buy and the billing address. The cards it pays with come from the card pool
+// (PaymentCard), one per job.
 type ProductFulfillerConfig struct {
-	URL          string                  `json:"url"`
-	Secret       string                  `json:"secret"`
-	CallbackURL  string                  `json:"callback_url"`
-	Plans        []string                `json:"plans"`
-	Card         ProductFulfillerCard    `json:"card"`
-	Billing      ProductFulfillerBilling `json:"billing"`
-	BrowserProxy string                  `json:"browser_proxy"`
+	URL         string                  `json:"url"`
+	Secret      string                  `json:"secret"`
+	CallbackURL string                  `json:"callback_url"`
+	Plans       []string                `json:"plans"`
+	Billing     ProductFulfillerBilling `json:"billing"`
 }
 
 // LoadProductFulfillerConfig decrypts the saved settings. Nothing saved yet
@@ -131,7 +127,7 @@ func SaveProductFulfillerConfig(config ProductFulfillerConfig) error {
 }
 
 // Normalize trims the settings and puts them in canonical form: URLs without
-// a trailing slash, card number digits only, upper-case codes, unique plans.
+// a trailing slash, upper-case codes, unique plans.
 func (c *ProductFulfillerConfig) Normalize() {
 	c.URL = strings.TrimRight(strings.TrimSpace(c.URL), "/")
 	c.Secret = strings.TrimSpace(c.Secret)
@@ -145,17 +141,12 @@ func (c *ProductFulfillerConfig) Normalize() {
 		plans = append(plans, plan)
 	}
 	c.Plans = plans
-	c.Card.Number = strings.NewReplacer(" ", "", "-", "").Replace(strings.TrimSpace(c.Card.Number))
-	c.Card.Expiry = strings.TrimSpace(c.Card.Expiry)
-	c.Card.CVC = strings.TrimSpace(c.Card.CVC)
-	c.Card.Holder = strings.TrimSpace(c.Card.Holder)
 	c.Billing.Country = strings.ToUpper(strings.TrimSpace(c.Billing.Country))
 	c.Billing.Currency = strings.ToUpper(strings.TrimSpace(c.Billing.Currency))
 	c.Billing.Line1 = strings.TrimSpace(c.Billing.Line1)
 	c.Billing.City = strings.TrimSpace(c.Billing.City)
 	c.Billing.State = strings.TrimSpace(c.Billing.State)
 	c.Billing.PostalCode = strings.TrimSpace(c.Billing.PostalCode)
-	c.BrowserProxy = strings.TrimSpace(c.BrowserProxy)
 }
 
 // Invalid returns the message key of the first malformed value, or "". Empty
@@ -175,26 +166,11 @@ func (c ProductFulfillerConfig) Invalid() string {
 			return "Plan codes may only contain letters, digits, dots, underscores and hyphens"
 		}
 	}
-	if c.Card.Number != "" && !productFulfillerCardNumberPattern.MatchString(c.Card.Number) {
-		return "The card number must be 12-19 digits"
-	}
-	if c.Card.Expiry != "" && !productFulfillerCardExpiryPattern.MatchString(c.Card.Expiry) {
-		return "The card expiry must look like MM/YY"
-	}
-	if c.Card.CVC != "" && !productFulfillerCardCVCPattern.MatchString(c.Card.CVC) {
-		return "The CVC must be 3-4 digits"
-	}
 	if c.Billing.Country != "" && !productFulfillerCountryPattern.MatchString(c.Billing.Country) {
 		return "The country must be a two-letter code such as US"
 	}
 	if c.Billing.Currency != "" && !productFulfillerCurrencyPattern.MatchString(c.Billing.Currency) {
 		return "The currency must be a three-letter code such as USD"
-	}
-	if c.BrowserProxy != "" {
-		parsed, err := url.Parse(c.BrowserProxy)
-		if err != nil || parsed.Host == "" || !slices.Contains([]string{"http", "https", "socks5"}, parsed.Scheme) {
-			return "Provide a valid proxy URL such as http://user:pass@host:port"
-		}
 	}
 	return ""
 }
@@ -216,23 +192,6 @@ func (c ProductFulfillerConfig) Missing() []string {
 	}
 	if len(c.Plans) == 0 {
 		missing = append(missing, "plans")
-	}
-	if c.Card.Number == "" {
-		missing = append(missing, "card_number")
-	}
-	if c.Card.Expiry == "" {
-		missing = append(missing, "card_expiry")
-	}
-	if c.Card.CVC == "" {
-		missing = append(missing, "card_cvc")
-	}
-	if c.Card.Holder == "" {
-		missing = append(missing, "card_holder")
-	}
-	// Checkouts from the fulfiller machine's own IP are refused as unusual
-	// activity, so purchases only run behind a proxy.
-	if c.BrowserProxy == "" {
-		missing = append(missing, "browser_proxy")
 	}
 	return missing
 }
@@ -326,12 +285,12 @@ type ProductFulfillmentJob struct {
 	Plan      string `json:"plan"`
 	// AccessToken signs in to ChatGPT; Cookie (a Cookie header with the
 	// sessionKey) signs in to Claude.
-	AccessToken  string                  `json:"access_token,omitempty"`
-	Cookie       string                  `json:"cookie,omitempty"`
-	CallbackURL  string                  `json:"callback_url"`
-	Card         ProductFulfillerCard    `json:"card"`
-	Billing      ProductFulfillerBilling `json:"billing"`
-	BrowserProxy string                  `json:"browser_proxy"`
+	AccessToken string `json:"access_token,omitempty"`
+	Cookie      string `json:"cookie,omitempty"`
+	CallbackURL string `json:"callback_url"`
+	// Card is the pooled card chosen for this purchase; the caller sets it.
+	Card    ProductFulfillerCard    `json:"card"`
+	Billing ProductFulfillerBilling `json:"billing"`
 }
 
 // SubmitProductFulfillment hands a job, with the card to pay with, to the
@@ -339,9 +298,7 @@ type ProductFulfillmentJob struct {
 // the callback.
 func SubmitProductFulfillment(config ProductFulfillerConfig, job ProductFulfillmentJob) error {
 	job.CallbackURL = config.EffectiveCallbackURL()
-	job.Card = config.Card
 	job.Billing = config.billingWithDefaults()
-	job.BrowserProxy = config.BrowserProxy
 	plaintext, err := common.Marshal(job)
 	if err != nil {
 		return err

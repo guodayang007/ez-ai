@@ -369,6 +369,14 @@ func InitResources() error {
 		}
 	}
 	model.InitOptionMap()
+	if common.IsMasterNode {
+		if err := service.ImportLegacyProductFulfillerCard(); err != nil {
+			common.SysError(common.LogText("failed to move the product fulfiller card into the card pool: %s", err.Error()))
+		}
+	}
+	if err := model.ReleaseStalePaymentCardLeases(); err != nil {
+		common.SysError(common.LogText("failed to release payment cards of interrupted purchases: %s", err.Error()))
+	}
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()

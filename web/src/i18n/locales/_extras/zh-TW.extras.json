@@ -1,0 +1,4 @@
+{
+  "translation.Automatic charges the ready card with the lowest priority number. Cards that are in use, disabled or expired cannot be chosen.": "自動選擇優先級數字最小的可用卡。使用中、已停用或已過期的卡無法選擇。",
+  "translation.Cards are charged in priority order (lower number first) when a payment runs automatically.": "自動付款時，依優先級由小到大（數字小的優先）依序使用卡。"
+}

@@ -26,11 +26,11 @@ import { toast } from 'sonner'
 import * as z from 'zod'
 
 import { ErrorState } from '@/components/error-state'
+import { LearnMore } from '@/components/learn-more'
 import { LoadingState } from '@/components/loading-state'
 import { PasswordInput } from '@/components/password-input'
 import { TagInput } from '@/components/tag-input'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Form,
   FormControl,
@@ -47,6 +47,7 @@ import {
   updateProductFulfillmentConfig,
 } from '@/features/products/api'
 import { FulfillerSetupNotice } from '@/features/products/components/fulfiller-setup-notice'
+import { FulfillmentCardPool } from '@/features/products/components/fulfillment-card-pool'
 import { PRODUCT_QUERY_KEYS } from '@/features/products/constants'
 import { isFulfillerReady } from '@/features/products/lib/fulfillment'
 import type {
@@ -83,19 +84,6 @@ const createSchema = (t: (key: string) => string) => {
       ),
     callback_url: url,
     plans: z.array(z.string()),
-    card_number: z
-      .string()
-      .refine(
-        (value) =>
-          !value.trim() || /^\d{12,19}$/.test(value.replaceAll(/[\s-]/g, '')),
-        t('The card number must be 12-19 digits')
-      ),
-    card_expiry: optional(
-      /^(0[1-9]|1[0-2])\/\d{2}$/,
-      t('The card expiry must look like MM/YY')
-    ),
-    card_cvc: optional(/^\d{3,4}$/, t('The CVC must be 3-4 digits')),
-    card_holder: z.string(),
     country: optional(
       /^[A-Za-z]{2}$/,
       t('The country must be a two-letter code such as US')
@@ -108,13 +96,11 @@ const createSchema = (t: (key: string) => string) => {
     city: z.string(),
     state: z.string(),
     postal_code: z.string(),
-    browser_proxy: z.string(),
-    clear_browser_proxy: z.boolean(),
   })
 }
 
 type FormValues = z.infer<ReturnType<typeof createSchema>>
-type TextFieldName = Exclude<keyof FormValues, 'plans' | 'clear_browser_proxy'>
+type TextFieldName = Exclude<keyof FormValues, 'plans'>
 
 /**
  * The DogPay fulfiller settings used by "Execute payment" on product orders.
@@ -157,7 +143,7 @@ export function ProductFulfillmentSettingsSection() {
     <SettingsSection title={t('Product Fulfillment')}>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Execute payment on product orders hands the order to the DogPay fulfillment service (services/dogpay-fulfiller), which pays with the card below.'
+          'Execute payment on product orders hands the order to the DogPay fulfillment service (services/dogpay-fulfiller), which pays with a ready card from the card pool.'
         )}
       </p>
       <Alert>
@@ -193,6 +179,15 @@ export function ProductFulfillmentSettingsSection() {
         />
       )}
 
+      {configQuery.data && (
+        <fieldset
+          disabled={!configQuery.data.encryption_ready}
+          className='min-w-0'
+        >
+          <FulfillmentCardPool />
+        </fieldset>
+      )}
+
       {form}
     </SettingsSection>
   )
@@ -208,18 +203,12 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
       secret: '',
       callback_url: view.callback_url,
       plans: view.plans,
-      card_number: '',
-      card_expiry: view.card_expiry,
-      card_cvc: '',
-      card_holder: view.card_holder,
       country: view.billing.country,
       currency: view.billing.currency,
       line1: view.billing.line1,
       city: view.billing.city,
       state: view.billing.state,
       postal_code: view.billing.postal_code,
-      browser_proxy: '',
-      clear_browser_proxy: false,
     }),
     [view]
   )
@@ -235,8 +224,6 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
         url: values.url.trim(),
         callback_url: values.callback_url.trim(),
         plans: values.plans,
-        card_expiry: values.card_expiry.trim(),
-        card_holder: values.card_holder.trim(),
         billing: {
           country: values.country.trim(),
           currency: values.currency.trim(),
@@ -248,13 +235,6 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
       }
       // Empty secret fields keep what is saved.
       if (values.secret.trim()) payload.secret = values.secret.trim()
-      if (values.card_number.trim()) payload.card_number = values.card_number
-      if (values.card_cvc.trim()) payload.card_cvc = values.card_cvc.trim()
-      if (values.browser_proxy.trim()) {
-        payload.browser_proxy = values.browser_proxy.trim()
-      } else if (values.clear_browser_proxy) {
-        payload.browser_proxy = ''
-      }
       const result = await updateProductFulfillmentConfig(payload)
       if (!result.success || !result.data) throw createServerError(result)
       return result.data
@@ -292,6 +272,17 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
               label={t('Fulfillment service URL')}
               placeholder='http://127.0.0.1:3100'
               description={t('Address of the running fulfillment service')}
+              help={[
+                t(
+                  'What it is: the address of the DogPay fulfillment service. ez-ai calls it when you click Execute payment on an order.'
+                ),
+                t(
+                  'Where to find it: on the machine where you run services/dogpay-fulfiller (node src/server.mjs). By default it listens on http://127.0.0.1:3100; the PORT and HOST values in that service .env file set the address.'
+                ),
+                t(
+                  'Note: must start with http:// or https://. Keep it on a private network, because only ez-ai should reach it.'
+                ),
+              ]}
             />
             <ConfigTextField
               control={control}
@@ -304,6 +295,17 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
               description={t(
                 'Must equal FULFILLER_SECRET in services/dogpay-fulfiller/.env'
               )}
+              help={[
+                t(
+                  'What it is: the password shared by ez-ai and the fulfillment service. Every request to the service is signed and encrypted with it.'
+                ),
+                t(
+                  'Where to find it: in services/dogpay-fulfiller/.env, under FULFILLER_SECRET. If it is empty, generate one with openssl rand -hex 32, put it in that file, and paste the same value here.'
+                ),
+                t(
+                  'Note: at least 32 characters. After saving it is never shown again; leave the field empty to keep the saved value.'
+                ),
+              ]}
             />
             <ConfigTextField
               control={control}
@@ -313,13 +315,40 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
               description={t(
                 'Where the fulfillment service reports results. Leave empty when it runs on the same server as ez-ai'
               )}
+              help={[
+                t(
+                  'What it is: the address the fulfillment service uses to report progress and results back to ez-ai.'
+                ),
+                t(
+                  'Where to find it: leave it empty if the service runs on the same server as ez-ai; the default is the grey placeholder text. Fill it in only when the service runs on another machine.'
+                ),
+                t(
+                  'Note: must start with http:// or https:// and be reachable from the fulfillment service.'
+                ),
+              ]}
             />
             <FormField
               control={control}
               name='plans'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Plans to buy')}</FormLabel>
+                  <div className='flex items-center gap-1.5'>
+                    <FormLabel>{t('Plans to buy')}</FormLabel>
+                    <FieldHelp
+                      label={t('Plans to buy')}
+                      paragraphs={[
+                        t(
+                          'What it is: the ChatGPT plan codes the admin may choose in the Execute payment dialog for ChatGPT orders.'
+                        ),
+                        t(
+                          'Where to find it: type a plan code and press Enter to add it. Add one code per Enter press, for example chatgptplusplan.'
+                        ),
+                        t(
+                          'Note: Claude plans are fixed (claude_pro, claude_max_5x, claude_max_20x) and are not set here. At least one ChatGPT plan is required.'
+                        ),
+                      ]}
+                    />
+                  </div>
                   <FormControl>
                     <TagInput
                       value={field.value}
@@ -338,44 +367,6 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
             />
           </SettingsFormGrid>
 
-          <h4 className='text-sm font-semibold'>{t('DogPay card')}</h4>
-          <SettingsFormGrid>
-            <ConfigTextField
-              control={control}
-              name='card_number'
-              secret
-              label={t('Card number')}
-              placeholder={
-                view.card_last4
-                  ? t(
-                      'Saved card ending in {{last4}}. Leave empty to keep it',
-                      {
-                        last4: view.card_last4,
-                      }
-                    )
-                  : '4242 4242 4242 4242'
-              }
-            />
-            <ConfigTextField
-              control={control}
-              name='card_expiry'
-              label={t('Expiry (MM/YY)')}
-              placeholder='MM/YY'
-            />
-            <ConfigTextField
-              control={control}
-              name='card_cvc'
-              secret
-              label={t('CVC')}
-              placeholder={view.has_card_cvc ? savedSecret : '123'}
-            />
-            <ConfigTextField
-              control={control}
-              name='card_holder'
-              label={t('Cardholder name')}
-            />
-          </SettingsFormGrid>
-
           <h4 className='text-sm font-semibold'>{t('Billing address')}</h4>
           <SettingsFormGrid>
             <ConfigTextField
@@ -383,72 +374,118 @@ function ProductFulfillmentForm(props: { view: ProductFulfillmentConfigView }) {
               name='country'
               label={t('Country code')}
               placeholder='US'
+              help={[
+                t(
+                  'What it is: the two-letter country code of the billing address, for example US.'
+                ),
+                t(
+                  'Where to find it: the country the card is billed to. The fulfiller machine must exit to the internet from this same country, or checkout stops before any payment is made.'
+                ),
+                t(
+                  'Note: use an ISO 3166-1 two-letter code such as US, GB or JP.'
+                ),
+              ]}
             />
             <ConfigTextField
               control={control}
               name='currency'
               label={t('Currency code')}
               placeholder='USD'
+              help={[
+                t(
+                  'What it is: the three-letter currency code of the billing account, for example USD.'
+                ),
+                t(
+                  'Where to find it: the currency the card is billed in. For a US billing country this is USD.'
+                ),
+                t('Note: use an ISO 4217 code such as USD, EUR or GBP.'),
+              ]}
             />
             <ConfigTextField
               control={control}
               name='line1'
               label={t('Address line')}
+              help={[
+                t('What it is: the street address of the billing address.'),
+                t(
+                  'Where to find it: the billing address registered for the cards in the card pool.'
+                ),
+                t(
+                  'Note: enter it exactly as registered, or the card may be declined.'
+                ),
+              ]}
             />
-            <ConfigTextField control={control} name='city' label={t('City')} />
+            <ConfigTextField
+              control={control}
+              name='city'
+              label={t('City')}
+              help={[
+                t('What it is: the city of the billing address.'),
+                t(
+                  'Where to find it: the same registered billing address as the address line.'
+                ),
+              ]}
+            />
             <ConfigTextField
               control={control}
               name='state'
               label={t('State / province')}
+              help={[
+                t('What it is: the state or province of the billing address.'),
+                t(
+                  'Where to find it: the same registered billing address as the address line.'
+                ),
+                t(
+                  'Note: leave empty if the billing country has no states or provinces.'
+                ),
+              ]}
             />
             <ConfigTextField
               control={control}
               name='postal_code'
               label={t('Postal code')}
+              help={[
+                t(
+                  'What it is: the postal code of the billing address (ZIP code in the US).'
+                ),
+                t(
+                  'Where to find it: the same registered billing address as the address line.'
+                ),
+                t(
+                  'Note: enter it exactly as registered, for example 78701 in the US.'
+                ),
+              ]}
             />
-          </SettingsFormGrid>
-
-          <h4 className='text-sm font-semibold'>{t('Browser')}</h4>
-          <SettingsFormGrid>
-            <ConfigTextField
-              control={control}
-              name='browser_proxy'
-              secret
-              label={t('Browser proxy')}
-              placeholder={
-                view.has_browser_proxy
-                  ? savedSecret
-                  : 'http://user:pass@host:port'
-              }
-              description={t(
-                'Required. The checkout browser goes through this proxy. Use a residential IP in the billing country'
-              )}
-            />
-            {view.has_browser_proxy && (
-              <FormField
-                control={control}
-                name='clear_browser_proxy'
-                render={({ field }) => (
-                  <FormItem className='flex flex-row items-center gap-2 self-center'>
-                    <FormControl>
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={(checked) =>
-                          field.onChange(checked === true)
-                        }
-                      />
-                    </FormControl>
-                    <FormLabel className='font-normal'>
-                      {t('Remove the saved proxy')}
-                    </FormLabel>
-                  </FormItem>
-                )}
-              />
-            )}
           </SettingsFormGrid>
         </fieldset>
       </SettingsForm>
     </Form>
+  )
+}
+
+/**
+ * A "?" button beside a field label. Each paragraph explains one part of the
+ * field: what it is, where to find its value, and the format or safety notes.
+ */
+function FieldHelp(props: { label: string; paragraphs: string[] }) {
+  const { t } = useTranslation()
+  return (
+    <LearnMore
+      triggerProps={{
+        'aria-label': t('Learn more about {{field}}', {
+          field: props.label,
+          // An accessible name is plain text, so "/" in a label must not be escaped.
+          interpolation: { escapeValue: false },
+        }),
+      }}
+      contentProps={{
+        className: 'flex max-w-sm flex-col gap-2 leading-relaxed',
+      }}
+    >
+      {props.paragraphs.map((paragraph) => (
+        <p key={paragraph}>{paragraph}</p>
+      ))}
+    </LearnMore>
   )
 }
 
@@ -458,6 +495,8 @@ type ConfigTextFieldProps = {
   label: string
   placeholder?: string
   description?: string
+  /** Paragraphs shown in the "?" popover beside the label. */
+  help?: string[]
   /** Masked input for values that are never shown again once saved. */
   secret?: boolean
 }
@@ -469,7 +508,12 @@ function ConfigTextField(props: ConfigTextFieldProps) {
       name={props.name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{props.label}</FormLabel>
+          <div className='flex items-center gap-1.5'>
+            <FormLabel>{props.label}</FormLabel>
+            {props.help && (
+              <FieldHelp label={props.label} paragraphs={props.help} />
+            )}
+          </div>
           <FormControl>
             {props.secret ? (
               <PasswordInput

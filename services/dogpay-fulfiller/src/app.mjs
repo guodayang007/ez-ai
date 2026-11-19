@@ -28,7 +28,6 @@ const PROGRESS_TIMEOUT_MS = 5_000
  * @property {string} cookie Claude only: a Cookie header with the sessionKey
  * @property {{number: string, expiry: string, cvc: string, holder: string}} card
  * @property {{country: string, currency: string, line1: string, city: string, state: string, postalCode: string}} billing
- * @property {string} browserProxy
  */
 
 /**
@@ -119,6 +118,7 @@ export function createApp(deps) {
         attempt_id: job.attemptId,
         success: result.success,
         step: result.step ?? '',
+        card_outcome: result.success ? 'success' : (result.cardOutcome ?? ''),
         message,
         message_key: result.messageKey,
         params: result.params ?? {},
@@ -151,7 +151,6 @@ export function createApp(deps) {
           cookie: job.cookie,
           card: job.card,
           billing: job.billing,
-          browserProxy: job.browserProxy,
         },
         report
       )
@@ -257,7 +256,6 @@ export function createApp(deps) {
         state: String(billing.state ?? ''),
         postalCode: String(billing.postal_code ?? ''),
       },
-      browserProxy: String(payload.browser_proxy ?? ''),
     }
     const signedIn =
       job.provider === 'claude' ? CLAUDE_COOKIE_PATTERN.test(job.cookie) : ACCESS_TOKEN_PATTERN.test(job.accessToken)

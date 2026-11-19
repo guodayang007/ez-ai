@@ -1,6 +1,6 @@
 // Browser plumbing shared by the ChatGPT and Claude purchasers: opening a
-// BitBrowser window behind the configured proxy, reporting steps, filling the
-// Stripe card form and waiting for the payment result.
+// BitBrowser window, reporting steps, filling the Stripe card form and waiting
+// for the payment result.
 import { chromium } from 'playwright'
 
 import { createBitBrowser } from './bitbrowser.mjs'
@@ -43,8 +43,8 @@ const VERIFICATION_FRAME_PATTERN = /hcaptcha|recaptcha|3ds|three-d-secure|challe
  */
 
 /**
- * Runs one purchase in a fresh BitBrowser window: opens `origin` (through
- * the proxy when one is set), records the exit address, then hands over to
+ * Runs one purchase in a fresh BitBrowser window: opens `origin`, records the
+ * exit address, then hands over to
  * `buy`. Any failure is returned as a result recorded against the step that
  * was running. The window is deleted afterwards.
  *
@@ -53,6 +53,7 @@ const VERIFICATION_FRAME_PATTERN = /hcaptcha|recaptcha|3ds|three-d-secure|challe
  * @param {object} options
  * @param {boolean} options.headless
  * @param {string} options.bitBrowserUrl the BitBrowser Local API, such as http://127.0.0.1:54345
+ * @param {object | null} [options.bitBrowserProxy] proxy for the windows; null connects directly
  * @param {string} options.origin such as https://chatgpt.com
  * @param {Array<object>} [options.cookies] added to the context before the first page loads
  * @param {string} [options.requiredCookie] the cookie that signs in; the purchase stops when the browser refuses it
@@ -80,44 +81,28 @@ export async function runPurchase(job, report, options, buy) {
       return waitForSecurityCheck(page, steps, { headless: options.headless, site })
     },
   }
-  const bitBrowser = createBitBrowser(options.bitBrowserUrl)
+  const bitBrowser = createBitBrowser(options.bitBrowserUrl, { proxy: options.bitBrowserProxy ?? null })
   let window
   let browser
   try {
     steps.start('browser', 'Launching the browser')
-    // Checkouts from this machine's own IP, or from outside the billing
-    // country, are refused as unusual activity and can flag the account, so
-    // a purchase only runs behind a proxy that exits in the billing country.
-    if (!job.browserProxy) {
+    // With a configured proxy, refuse before any window opens if it exits
+    // outside the billing country.
+    const proxyExit = await bitBrowser.checkProxy()
+    if (proxyExit?.countryCode && job.billing.country && proxyExit.countryCode !== job.billing.country) {
       throw new PurchaseError(
-        'No browser proxy is set, so the purchase was not started. ' +
-          'Set a residential proxy in {{billing}} as the browser proxy in the ez-ai Product Fulfillment settings.',
-        { billing: job.billing.country }
-      )
-    }
-    // Shown in messages without the username and password.
-    const proxyUrl = new URL(job.browserProxy)
-    const proxy = `${proxyUrl.protocol}//${proxyUrl.host}`
-    const proxyExit = await bitBrowser.checkProxy(job.browserProxy)
-    steps.info('BitBrowser checked the browser proxy {{proxy}}: exit IP {{ip}} ({{country}} {{city}}, time zone {{timeZone}})', {
-      proxy,
-      ...proxyExit,
-    })
-    if (job.billing.country && proxyExit.country !== job.billing.country) {
-      throw new PurchaseError(
-        'The browser proxy {{proxy}} exits in {{country}} (IP {{ip}}) but the billing country is {{billing}}, ' +
-          'so the purchase was not started. Use a proxy in {{billing}}.',
-        { proxy, country: proxyExit.country || 'unknown', ip: proxyExit.ip, billing: job.billing.country }
+        'The BITBROWSER_PROXY exits at {{ip}} in {{country}}, but the billing country is {{billing}}, ' +
+          'so no browser was opened. Configure a proxy in {{billing}} in the fulfiller .env.',
+        { ip: proxyExit.ip || 'unknown', country: proxyExit.countryCode, billing: job.billing.country }
       )
     }
     window = await bitBrowser.openWindow({
       name: `ez-ai ${job.tradeNo}`,
-      proxyUrl: job.browserProxy,
       headless: options.headless,
     })
     browser = await chromium.connectOverCDP(window.ws)
-    // BitBrowser applies the proxy and fingerprint to the default context; a
-    // new context would bypass them.
+    // BitBrowser applies the fingerprint to the default context; a new context
+    // would bypass it.
     const context = browser.contexts()[0]
     const refused = await addCookies(context, options.cookies ?? [], options.requiredCookie)
     // API calls run from a tab that stays on the provider's site so they
@@ -127,17 +112,11 @@ export async function runPurchase(job, report, options, buy) {
     try {
       await apiPage.goto(options.origin, { waitUntil: 'domcontentloaded' })
     } catch (error) {
-      // A wrong proxy password shows up only as a timeout, so a failure here
-      // points at the proxy.
-      throw new PurchaseError(
-        'Could not reach {{site}} through the browser proxy {{proxy}}: {{error}}. ' +
-          'Check the proxy address, username and password in the ez-ai Product Fulfillment settings.',
-        { site, proxy, error: error.message.split('\n')[0] }
-      )
+      throw new PurchaseError('Could not reach {{site}}: {{error}}', { site, error: error.message.split('\n')[0] })
     }
     await steps.securityCheck(apiPage)
     // Cloudflare in front of the site reports the address it sees, so the
-    // record shows whether the proxy is used and where it exits.
+    // record shows where the browser exits.
     const trace = await apiPage
       .evaluate(async () => {
         const response = await fetch('/cdn-cgi/trace')
@@ -149,16 +128,18 @@ export async function runPurchase(job, report, options, buy) {
       ip: /^ip=(.+)$/m.exec(trace)?.[1] ?? 'unknown',
       country: /^loc=(.+)$/m.exec(trace)?.[1] ?? 'unknown',
     }
-    // The site's own view decides: a proxy that rotates or leaks may exit
-    // elsewhere than BitBrowser's check showed.
+    // Checkouts from outside the billing country are refused as unusual
+    // activity and can flag the account, so the site's view of the exit
+    // country must match the billing country.
     if (exit.country !== 'unknown' && job.billing.country && exit.country !== job.billing.country) {
       throw new PurchaseError(
         '{{site}} sees the browser at {{ip}} in {{country}} but the billing country is {{billing}}, ' +
-          'so the purchase was stopped before checkout. Use a browser proxy in {{billing}}.',
+          'so the purchase was stopped before checkout. Route the windows through a proxy in {{billing}} ' +
+          '(BITBROWSER_PROXY_* in the fulfiller .env), or run the fulfiller from a connection in {{billing}}.',
         { site, ip: exit.ip, country: exit.country, billing: job.billing.country }
       )
     }
-    steps.done('Opened {{site}} through the browser proxy; exit IP {{ip}} ({{country}})', exit)
+    steps.done('Opened {{site}} in BitBrowser; exit IP {{ip}} ({{country}})', exit)
     if (refused.length > 0) {
       steps.info('The browser refused these cookies, so they were left out: {{names}}', { names: refused.join(', ') })
     }
@@ -166,7 +147,7 @@ export async function runPurchase(job, report, options, buy) {
   } catch (error) {
     const failure =
       error instanceof PurchaseError ? error : new PurchaseError('Unexpected error: {{error}}', { error: error.message })
-    return { success: false, step: current, messageKey: failure.key, params: failure.params }
+    return { success: false, step: current, messageKey: failure.key, params: failure.params, cardOutcome: failure.cardOutcome }
   } finally {
     await browser?.close().catch(() => {})
     if (window) {
@@ -321,12 +302,13 @@ export async function waitForPaymentResult(page, steps, options) {
       throw new PurchaseError(
         'Checkout asked for a captcha or 3-D Secure verification, so the payment was not finished. ' +
           'Complete it by hand: {{url}}',
-        { url: options.checkoutUrl }
+        { url: options.checkoutUrl },
+        { cardOutcome: 'needs_verification' }
       )
     }
     const errorText = await findErrorText(page)
     if (errorText) {
-      throw new PurchaseError('Checkout rejected the payment: {{reason}}', { reason: errorText })
+      throw new PurchaseError('Checkout rejected the payment: {{reason}}', { reason: errorText }, { cardOutcome: 'declined' })
     }
     // Check the account every few polls; this also covers embedded
     // checkouts, which may not navigate after paying.

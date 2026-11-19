@@ -79,11 +79,7 @@ export function FulfillerSetupNotice(props: FulfillerSetupNoticeProps) {
         url: t('Fulfillment service URL'),
         secret: t('Shared secret'),
         plans: t('Plans to buy'),
-        card_number: t('Card number'),
-        card_expiry: t('Expiry (MM/YY)'),
-        card_cvc: t('CVC'),
-        card_holder: t('Cardholder name'),
-        browser_proxy: t('Browser proxy'),
+        cards: t('A ready card in the card pool'),
       }
       steps.push({
         text: t('Fill in: {{fields}}', {

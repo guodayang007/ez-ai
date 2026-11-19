@@ -119,9 +119,11 @@ DEFAULT_USER_PASSWORD=12345678
 
 ## 6. 商品订单自动开通（DogPay）
 
-后台“商品订单”页的“执行支付”按钮会把订单交给独立服务 `services/dogpay-fulfiller`：它在比特浏览器（BitBrowser）里用买家提交的 ChatGPT Session 打开结账页，用 DogPay 虚拟卡付款，再回调 ez-ai 把订单置为已完成（失败则保留“处理中”并记录原因，可重试）。
+后台“商品订单”页的“执行支付”按钮会把订单交给独立服务 `services/dogpay-fulfiller`：它在比特浏览器（BitBrowser）里用买家提交的 ChatGPT Session 打开结账页，用卡池中的一张卡付款（卡不一定是 DogPay 的），再回调 ez-ai 把订单置为已完成（失败则保留“处理中”并记录原因，可重试）。
 
-全部开通配置（服务地址、共享密钥、回调地址、可购买套餐、DogPay 卡、账单地址、浏览器代理）在后台“系统设置 → 计费 → 商品自动开通”填写，只有超级管理员可见。它们用 `CONFIG_ENCRYPTION_KEY` 以 AES-256-GCM 加密后，作为 `options` 表中的一条 `ProductFulfillerConfig` 保存（值以 `enc:v1:` 开头），通用设置接口既不返回也不能修改它。卡号、CVC、密钥和代理保存后不再显示，卡号只显示末四位。
+开通配置（服务地址、共享密钥、回调地址、可购买套餐、账单地址）在后台“系统设置 → 计费 → 商品自动开通”填写，只有超级管理员可见。它们用 `CONFIG_ENCRYPTION_KEY` 以 AES-256-GCM 加密后，作为 `options` 表中的一条 `ProductFulfillerConfig` 保存（值以 `enc:v1:` 开头），通用设置接口既不返回也不能修改它。密钥保存后不再显示。
+
+付款卡在同一页的“卡池”区块维护，保存在 `payment_cards` 表：卡号和 CVC 同样加密保存（卡号另存一份带密钥的指纹用于去重），接口只返回品牌、末四位、有效期和状态，不返回完整卡号或 CVC。卡可以来自任何来源（来源标签：`dogpay` / `virtual` / `physical` / `other`，开通服务不区分）。选卡规则：自动支付时，从启用、未过期、未在为其他订单付款的卡中随机选一张（优先级字段不再影响自动选卡）；执行支付时也可在弹窗里指定某张卡。一张卡同一时间只为一单付款（付款记录结束时释放）。开通服务回报 `card_outcome`：`declined`（卡被拒）会自动停用该卡，需要管理员重新启用；`needs_verification`（验证码、3-D Secure）和无结果说明的失败不计入卡的失败次数，也不会自动换卡重试。旧版设置里的单张卡在启动时自动迁移进卡池，只迁移一次。
 
 ez-ai 的 `.env` 必须有固定的加密密钥（本地已生成）：
 
@@ -146,20 +148,33 @@ npm test                             # 服务自身的单元测试
 
 每次执行支付的过程：
 
-1. 先调用 `/checkagent` 让比特浏览器通过后台设置的浏览器代理连一次，查出代理的出口 IP、国家、城市和时区并记入详细日志；没设置代理、代理连不上，或出口国家不是账单国家时，直接失败，不开窗口、不扣款。
-2. 调用 `/browser/add` 新建一个临时窗口。窗口名为 `ez-ai <订单号>`，使用随机 Windows 指纹，语言固定为 en-US，代理用后台设置的浏览器代理；时区和地理位置按代理 IP 生成，WebRTC 设为“替换”（网站看到的是代理 IP），Cookie 不同步到比特云端。
-3. 调用 `/browser/open` 打开窗口，再用 Playwright 的 `connectOverCDP` 连接它返回的 `ws` 地址来操作页面。
+1. 若配置了 `BITBROWSER_PROXY_TYPE`，先调用 `/checkagent` 检测代理出口国家；与账单国家不一致时直接失败，不打开窗口。
+2. 调用 `/browser/add` 新建一个临时窗口。窗口名为 `ez-ai <订单号>`，使用随机 Windows 指纹，语言固定为 en-US；未配置代理时直连（`proxyType: noproxy`），配置了代理时用 `proxyType`/`host`/`port`/账号密码走代理；时区和地理位置按窗口出口 IP 生成，WebRTC 设为“替换”，Cookie 不同步到比特云端。
+2. 调用 `/browser/open` 打开窗口，再用 Playwright 的 `connectOverCDP` 连接它返回的 `ws` 地址来操作页面。
+3. 打开 chatgpt.com 或 claude.ai 后，通过 `/cdn-cgi/trace` 读取网站看到的出口 IP 和国家；与账单国家不一致时在结账前停止，不扣款。
 4. 无论成功还是失败，结束后都调用 `/browser/close` 关闭窗口，按文档等 5 秒后再调用 `/browser/delete` 彻底删除，买家的登录信息不会留在比特浏览器里。
 
 `HEADLESS=true`（默认）时以 `--headless` 打开窗口；设为 `false` 可以在比特浏览器窗口里看到整个过程，或手动通过人机验证。开通服务启动时会检查比特浏览器本地接口，连不上就打印警告；此时执行支付会在“启动浏览器”一步失败，并写明原因。
 
 每次执行支付时，ez-ai 把卡和账单信息随任务发给开通服务，请求体用共享密钥派生的密钥加密并签名，网络上不出现明文卡号。
 
-浏览器代理填 `http://user:pass@host:port`（也支持 `https://` 和带账号密码的 `socks5://user:pass@host:port`，由比特浏览器窗口使用）。浏览器代理是必填项：直接用本机 IP 结账会被 chatgpt.com 以“异常活动”拒绝，请用账单国家（默认 US）的住宅代理。窗口打开后“启动浏览器”一步还会记录 chatgpt.com / claude.ai 看到的出口 IP 和国家，与账单国家不一致时在结账前停止。
+所有支付方式（ChatGPT 与 Claude）都通过比特浏览器完成。出口 IP 决定结账是否被拒：从其他国家结账会被 chatgpt.com 以“异常活动”拒绝。比特浏览器只能改指纹、时区和语言，不能改出口 IP，所以开通服务所在网络不在账单国家（默认 US）时，必须给窗口配置该国家的代理。
+
+代理配置在开通服务的 `.env` 中（留空即直连）：
+
+```
+BITBROWSER_PROXY_TYPE=socks5        # http | https | socks5 | ssh；留空为直连
+BITBROWSER_PROXY_HOST=...
+BITBROWSER_PROXY_PORT=...
+BITBROWSER_PROXY_USERNAME=...
+BITBROWSER_PROXY_PASSWORD=...
+```
+
+代理出口必须在账单国家。开通服务会先用 `/checkagent` 检测，不符合则在打开窗口前停止，不扣款。数据中心 IP 也可能被 chatgpt.com 拒绝，住宅代理更稳妥。
 
 开通服务不可用时，“执行支付”弹窗和设置页会说明原因（未设置加密密钥、配置无法解密、缺少哪些项、服务未启动、密钥不一致），并给出“前往开通设置”或“重新检查”。
 
-Claude 商品：启动时自动录入一次“Claude”商品（Pro / Max 5x / Max 20x，各 1 个月；options 表 `ProductClaudeSeeded` 标记已录入，删除后不会再加回）。买家下单必须填写 claude.ai 的 Cookie（输入类型 `claude_cookie`）：可以是 `sessionKey` 的值（`sk-ant-sid…`），也可以是整段 Cookie 请求头；服务端只保留合法的键值对并去掉 Cloudflare 的 Cookie，没有有效 sessionKey 时拒绝下单。对 Claude 订单“执行支付”时，套餐固定为 `claude_pro`、`claude_max_5x`、`claude_max_20x`（由开通服务 `src/claude.mjs` 定义，不在设置里配置，弹窗按规格名预选）；开通服务把 Cookie 写入浏览器，用 `/api/organizations` 检查现有订阅，打开 `claude.ai/upgrade/pro` 或 `/upgrade/max` 选档位后用同一张 DogPay 卡付款。claude.ai 的页面和接口随时可能变化，失败时支付记录会写明停在哪一步。
+Claude 商品：启动时自动录入一次“Claude”商品（Pro / Max 5x / Max 20x，各 1 个月；options 表 `ProductClaudeSeeded` 标记已录入，删除后不会再加回）。买家下单必须填写 claude.ai 的 Cookie（输入类型 `claude_cookie`）：可以是 `sessionKey` 的值（`sk-ant-sid…`），也可以是整段 Cookie 请求头；服务端只保留合法的键值对并去掉 Cloudflare 的 Cookie，没有有效 sessionKey 时拒绝下单。对 Claude 订单“执行支付”时，套餐固定为 `claude_pro`、`claude_max_5x`、`claude_max_20x`（由开通服务 `src/claude.mjs` 定义，不在设置里配置，弹窗按规格名预选）；开通服务把 Cookie 写入浏览器，用 `/api/organizations` 检查现有订阅，打开 `claude.ai/upgrade/pro` 或 `/upgrade/max` 选档位后用为该订单选出的卡付款。claude.ai 的页面和接口随时可能变化，失败时支付记录会写明停在哪一步。
 
 使用条件：
 

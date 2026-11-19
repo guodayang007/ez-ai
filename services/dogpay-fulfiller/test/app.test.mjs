@@ -69,7 +69,6 @@ const job = (overrides = {}) => ({
   callback_url: 'http://ez-ai.test/api/product/fulfillment/callback',
   card: { number: '4242424242424242', expiry: '12/30', cvc: '123', holder: 'Test Holder' },
   billing: { country: 'US', currency: 'USD', city: 'Austin', postal_code: '73301' },
-  browser_proxy: '',
   ...overrides,
 })
 
@@ -146,7 +145,6 @@ test('accepted job reports each step and then posts its signed result', async ()
       cookie: '',
       card: { number: '4242424242424242', expiry: '12/30', cvc: '123', holder: 'Test Holder' },
       billing: { country: 'US', currency: 'USD', line1: '', city: 'Austin', state: '', postalCode: '73301' },
-      browserProxy: '',
     },
   ])
   releasePurchase()
@@ -182,6 +180,7 @@ test('accepted job reports each step and then posts its signed result', async ()
     attempt_id: 42,
     success: true,
     step: '',
+    card_outcome: 'success',
     message: 'Paid, plan is now plus',
     message_key: 'Paid, plan is now {{plan}}',
     params: { plan: 'plus' },
@@ -197,7 +196,13 @@ test('undelivered progress does not hold back the failed result', async () => {
   purchases = []
   callbacks = []
   failProgress = true
-  purchaseResult = { success: false, step: 'checkout', messageKey: 'Checkout rejected the payment: {{reason}}', params: { reason: 'declined' } }
+  purchaseResult = {
+    success: false,
+    step: 'checkout',
+    messageKey: 'Checkout rejected the payment: {{reason}}',
+    params: { reason: 'declined' },
+    cardOutcome: 'declined',
+  }
   try {
     assert.equal((await postJob(job({ trade_no: 'PO2' }))).status, 202)
     await new Promise((resolve) => setImmediate(resolve))
@@ -212,6 +217,7 @@ test('undelivered progress does not hold back the failed result', async () => {
   assert.equal(result.success, false)
   assert.equal(result.step, 'checkout', 'the result names the step that failed')
   assert.equal(result.message, 'Checkout rejected the payment: declined')
+  assert.equal(result.card_outcome, 'declined', 'ez-ai disables the card that was declined')
 })
 
 test('config requires the shared secret', () => {

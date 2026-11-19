@@ -40,10 +40,6 @@ const savedView: ProductFulfillmentConfigView = {
     'http://127.0.0.1:3000/api/product/fulfillment/callback',
   plans: ['chatgptplusplan'],
   has_secret: true,
-  card_last4: '4242',
-  card_expiry: '12/30',
-  has_card_cvc: true,
-  card_holder: 'Test Holder',
   billing: {
     country: 'US',
     currency: 'USD',
@@ -52,7 +48,6 @@ const savedView: ProductFulfillmentConfigView = {
     state: '',
     postal_code: '',
   },
-  has_browser_proxy: false,
 }
 
 function mockServer(
@@ -66,6 +61,10 @@ function mockServer(
   vi.spyOn(productsApi, 'getProductFulfillerHealth').mockResolvedValue({
     success: true,
     data: health,
+  })
+  vi.spyOn(productsApi, 'getProductFulfillmentCards').mockResolvedValue({
+    success: true,
+    data: [],
   })
   return vi
     .spyOn(productsApi, 'updateProductFulfillmentConfig')
@@ -108,23 +107,19 @@ describe('product fulfillment settings', () => {
     })
     renderSection()
 
-    const cardNumber = await screen.findByLabelText('Card number')
-    expect(cardNumber).toHaveValue('')
-    expect(cardNumber).toHaveAttribute(
-      'placeholder',
-      'Saved card ending in 4242. Leave empty to keep it'
-    )
-    await userEvent.type(cardNumber, '5555 5555 5555 4444')
+    const city = await screen.findByLabelText('City')
+    expect(city).toHaveValue('Austin')
+    await userEvent.clear(city)
+    await userEvent.type(city, 'Dallas')
     await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
     const payload = update.mock.calls[0][0]
-    expect(payload.card_number).toBe('5555 5555 5555 4444')
     expect(payload).not.toHaveProperty('secret')
+    expect(payload).not.toHaveProperty('card_number')
     expect(payload).not.toHaveProperty('card_cvc')
-    expect(payload).not.toHaveProperty('browser_proxy')
     expect(payload.plans).toEqual(['chatgptplusplan'])
-    expect(payload.billing.city).toBe('Austin')
+    expect(payload.billing.city).toBe('Dallas')
   })
 
   test('without an encryption key the fields are disabled and the key setup is explained', async () => {
@@ -134,7 +129,6 @@ describe('product fulfillment settings', () => {
         encryption_ready: false,
         readable: false,
         has_secret: false,
-        card_last4: '',
       },
       {
         status: 'key_missing',
@@ -149,6 +143,57 @@ describe('product fulfillment settings', () => {
     expect(
       await screen.findByText('The settings encryption key is not set')
     ).toBeInTheDocument()
-    expect(await screen.findByLabelText('Card number')).toBeDisabled()
+    expect(
+      await screen.findByRole('button', { name: 'Add card' })
+    ).toBeDisabled()
+  })
+
+  test('clicking the help button beside a field shows what the field is', async () => {
+    mockServer(savedView, {
+      status: 'ok',
+      plans: ['chatgptplusplan'],
+      claude_plans: ['claude_pro'],
+      service_url: savedView.url,
+      missing: [],
+    })
+    renderSection()
+
+    await userEvent.click(
+      await screen.findByRole('button', {
+        name: 'Learn more about Callback URL',
+      })
+    )
+
+    expect(
+      await screen.findByText(
+        'What it is: the address the fulfillment service uses to report progress and results back to ez-ai.'
+      )
+    ).toBeVisible()
+  })
+
+  test.each([
+    'Fulfillment service URL',
+    'Shared secret',
+    'Callback URL',
+    'Plans to buy',
+    'Country code',
+    'Currency code',
+    'Address line',
+    'City',
+    'State / province',
+    'Postal code',
+  ])('the %s input has a help button', async (label) => {
+    mockServer(savedView, {
+      status: 'ok',
+      plans: ['chatgptplusplan'],
+      claude_plans: ['claude_pro'],
+      service_url: savedView.url,
+      missing: [],
+    })
+    renderSection()
+
+    expect(
+      await screen.findByRole('button', { name: `Learn more about ${label}` })
+    ).toBeInTheDocument()
   })
 })

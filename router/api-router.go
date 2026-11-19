@@ -232,6 +232,11 @@ func SetApiRouter(router *gin.Engine) {
 			// The settings include the payment card, so only the root user sees them.
 			productAdminRoute.GET("/fulfillment/config", middleware.RootAuth(), controller.AdminGetProductFulfillmentConfig)
 			productAdminRoute.PUT("/fulfillment/config", middleware.RootAuth(), controller.AdminUpdateProductFulfillmentConfig)
+			// Pooled cards hold card numbers and CVCs, so only the root user manages them.
+			productAdminRoute.GET("/fulfillment/cards", middleware.RootAuth(), controller.AdminListPaymentCards)
+			productAdminRoute.POST("/fulfillment/cards", middleware.RootAuth(), controller.AdminCreatePaymentCard)
+			productAdminRoute.PUT("/fulfillment/cards/:id", middleware.RootAuth(), controller.AdminUpdatePaymentCard)
+			productAdminRoute.DELETE("/fulfillment/cards/:id", middleware.RootAuth(), controller.AdminDeletePaymentCard)
 		}
 
 		// Subscription payment callbacks (no auth)

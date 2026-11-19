@@ -453,6 +453,7 @@ func migrateDB() error {
 		&ProductSku{},
 		&ProductOrder{},
 		&ProductFulfillmentAttempt{},
+		&PaymentCard{},
 	)
 	if err != nil {
 		return err

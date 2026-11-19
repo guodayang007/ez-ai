@@ -39,8 +39,15 @@ import {
   getServerErrorMessage,
 } from '@/lib/server-error-message'
 
-import { executeProductOrderPayment, getProductFulfillerHealth } from '../api'
-import { PRODUCT_QUERY_KEYS } from '../constants'
+import {
+  executeProductOrderPayment,
+  getProductFulfillerHealth,
+  getProductFulfillmentCards,
+} from '../api'
+import {
+  PRODUCT_FULFILLMENT_CARD_STATUSES,
+  PRODUCT_QUERY_KEYS,
+} from '../constants'
 import { formatProductPrice } from '../lib/format'
 import {
   canExecutePayment,
@@ -49,7 +56,7 @@ import {
   getOrderPlans,
   isFulfillerReady,
 } from '../lib/fulfillment'
-import type { ProductOrder } from '../types'
+import type { ProductFulfillmentCard, ProductOrder } from '../types'
 import { FulfillerSetupNotice } from './fulfiller-setup-notice'
 import { OrderStatusBadge } from './order-details'
 
@@ -73,6 +80,8 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
   const order = props.order
   const payable = order !== null && canExecutePayment(order)
   const [plan, setPlan] = useState('')
+  // 0 lets the server choose a ready card from the pool.
+  const [cardId, setCardId] = useState(0)
 
   const healthQuery = useQuery({
     queryKey: PRODUCT_QUERY_KEYS.fulfillerHealth,
@@ -86,6 +95,18 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
     staleTime: 0,
     meta: { errorToast: false },
   })
+  const cardsQuery = useQuery({
+    queryKey: PRODUCT_QUERY_KEYS.fulfillmentCards,
+    queryFn: async () => {
+      const result = await getProductFulfillmentCards()
+      if (!result.success || !result.data) throw createServerError(result)
+      return result.data
+    },
+    enabled: payable,
+    staleTime: 0,
+    meta: { errorToast: false },
+  })
+  const cards = cardsQuery.data ?? []
   const health = healthQuery.data
   const ready = health !== undefined && isFulfillerReady(health)
   // A Claude order is bought with a Claude plan, any other with a ChatGPT one.
@@ -98,10 +119,14 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
     )
   }, [order, healthQuery.data])
 
+  useEffect(() => {
+    setCardId(0)
+  }, [order])
+
   const mutation = useMutation({
     mutationFn: async () => {
       if (!order || !plan) return
-      const result = await executeProductOrderPayment(order.id, plan)
+      const result = await executeProductOrderPayment(order.id, plan, cardId)
       if (!result.success) throw createServerError(result)
     },
     onSuccess: () => {
@@ -135,7 +160,7 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
 
   // The main button always does something useful: pay, open the settings
   // that need fixing, or check the service again after starting it.
-  let confirmText = t('Pay with DogPay')
+  let confirmText = t('Pay with card')
   let handleConfirm = () => mutation.mutate()
   let confirmDisabled = !payable || !plan
   // An encryption key or a stopped service is fixed on the server; the rest
@@ -157,6 +182,14 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
   }
 
   const planItems = plans.map((value) => ({ value, label: value }))
+  const cardItems = [
+    { value: '0', label: t('Automatic'), disabled: false },
+    ...cards.map((card) => ({
+      value: String(card.id),
+      label: cardOptionLabel(card, t),
+      disabled: card.status !== 'ready',
+    })),
+  ]
 
   let body: ReactNode
   if (order && !payable) {
@@ -223,6 +256,34 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
             </SelectGroup>
           </SelectContent>
         </Select>
+        <Label htmlFor='order-payment-card'>{t('Card')}</Label>
+        <Select
+          items={cardItems}
+          value={String(cardId)}
+          onValueChange={(value) => setCardId(Number(value ?? 0))}
+        >
+          <SelectTrigger id='order-payment-card' className='w-full'>
+            <SelectValue placeholder={t('Automatic')} />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            <SelectGroup>
+              {cardItems.map((item) => (
+                <SelectItem
+                  key={item.value}
+                  value={item.value}
+                  disabled={item.disabled}
+                >
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <p className='text-muted-foreground text-xs'>
+          {t(
+            'Automatic picks a random ready card. Cards that are in use, disabled or expired cannot be chosen.'
+          )}
+        </p>
       </div>
     )
   }
@@ -235,7 +296,7 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
       desc={
         order
           ? t(
-              'Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with the DogPay card. The card is charged as soon as you confirm',
+              'Pay for order {{tradeNo}} ({{product}}, buyer paid {{price}}) with a card from the card pool. The card is charged as soon as you confirm',
               {
                 tradeNo: order.trade_no,
                 product: `${order.product_title} · ${order.sku_name}`,
@@ -256,4 +317,15 @@ export function OrderPaymentDialog(props: OrderPaymentDialogProps) {
       {body}
     </ConfirmDialog>
   )
+}
+
+/** A card's entry in the Card select; cards that cannot pay say why. */
+function cardOptionLabel(
+  card: ProductFulfillmentCard,
+  t: (key: string) => string
+): string {
+  const name = `${card.label} •••• ${card.last4}`
+  if (card.status === 'ready') return name
+  const status = PRODUCT_FULFILLMENT_CARD_STATUSES[card.status]
+  return `${name} · ${t(status.labelKey)}`
 }

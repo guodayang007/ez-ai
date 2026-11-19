@@ -23,7 +23,7 @@ const EMAIL_SELECTORS = ['#email']
 const SUBMIT_SELECTORS = ['[data-testid="hosted-payment-submit-button"]', '.SubmitButton', 'button[type="submit"]']
 
 /**
- * The card, billing address and browser proxy come with each job from ez-ai,
+ * The card and billing address come with each job from ez-ai,
  * which stores them encrypted; only browser options are local.
  * @param {ReturnType<import('./config.mjs').loadConfig>} config
  */
@@ -34,7 +34,12 @@ export function createChatGPTPurchaser(config) {
    * @returns {Promise<import('./app.mjs').PurchaseResult>}
    */
   return function purchase(job, report) {
-    const options = { headless: config.headless, bitBrowserUrl: config.bitBrowserUrl, origin: CHATGPT_ORIGIN }
+    const options = {
+      headless: config.headless,
+      bitBrowserUrl: config.bitBrowserUrl,
+      bitBrowserProxy: config.bitBrowserProxy,
+      origin: CHATGPT_ORIGIN,
+    }
     return runPurchase(job, report, options, (apiPage, page, steps) => buy(apiPage, page, job, steps))
   }
 }
@@ -107,7 +112,7 @@ async function chatgptFetch(page, accessToken, path, init = {}) {
     throw new PurchaseError('The ChatGPT session has expired or was signed out; ask the buyer for a new session.')
   }
   if (response.status === 403 && /<html/i.test(response.text)) {
-    throw new PurchaseError('chatgpt.com blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.')
+    throw new PurchaseError('chatgpt.com blocked the request with a browser check; retry later.')
   }
   let data
   try {
@@ -125,8 +130,8 @@ async function chatgptFetch(page, accessToken, path, init = {}) {
     if (/unusual activity/i.test(detail)) {
       throw new PurchaseError(
         'chatgpt.com {{path}} refused the request as unusual activity, so nothing was charged. ' +
-          'The browser exit IP is usually the cause: set a residential browser proxy in the billing country ' +
-          'in the ez-ai Product Fulfillment settings, then wait a while before retrying.',
+          'The browser exit IP is usually the cause: run the fulfiller from a residential connection in the billing country, ' +
+          'then wait a while before retrying.',
         { path }
       )
     }

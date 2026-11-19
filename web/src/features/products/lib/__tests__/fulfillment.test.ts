@@ -139,6 +139,8 @@ function attempt(
     plan: 'chatgptplusplan',
     status,
     current_step: currentStep,
+    card_id: 0,
+    card_label: '',
     operator_id: 1,
     operator_name: 'root',
     started_at: 1,

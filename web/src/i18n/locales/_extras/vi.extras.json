@@ -1,0 +1,4 @@
+{
+  "translation.Automatic charges the ready card with the lowest priority number. Cards that are in use, disabled or expired cannot be chosen.": "Tự động dùng thẻ sẵn sàng có số ưu tiên nhỏ nhất. Thẻ đang dùng, đã tắt hoặc hết hạn không thể chọn.",
+  "translation.Cards are charged in priority order (lower number first) when a payment runs automatically.": "Khi thanh toán tự động, thẻ được dùng theo thứ tự ưu tiên (số nhỏ hơn trước)."
+}

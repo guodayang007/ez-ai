@@ -24,6 +24,8 @@ import type {
   Product,
   ProductFulfillerHealth,
   ProductFulfillmentAttempt,
+  ProductFulfillmentCard,
+  ProductFulfillmentCardInput,
   ProductFulfillmentConfigUpdate,
   ProductFulfillmentConfigView,
   ProductOrder,
@@ -137,12 +139,49 @@ export async function updateProductFulfillmentConfig(
   return res.data
 }
 
-/** Asks the fulfiller service to buy plan for the order with the DogPay card. */
+/** The payment card pool, in the order cards are tried. Root only. */
+export async function getProductFulfillmentCards(): Promise<
+  ApiResponse<ProductFulfillmentCard[]>
+> {
+  const res = await api.get('/api/product/admin/fulfillment/cards')
+  return res.data
+}
+
+export async function createProductFulfillmentCard(
+  payload: ProductFulfillmentCardInput
+): Promise<ApiResponse<ProductFulfillmentCard>> {
+  const res = await api.post('/api/product/admin/fulfillment/cards', payload)
+  return res.data
+}
+
+export async function updateProductFulfillmentCard(
+  id: number,
+  payload: Partial<ProductFulfillmentCardInput>
+): Promise<ApiResponse<ProductFulfillmentCard>> {
+  const res = await api.put(`/api/product/admin/fulfillment/cards/${id}`, payload)
+  return res.data
+}
+
+export async function deleteProductFulfillmentCard(
+  id: number
+): Promise<ApiResponse> {
+  const res = await api.delete(`/api/product/admin/fulfillment/cards/${id}`)
+  return res.data
+}
+
+/**
+ * Asks the fulfiller service to buy plan for the order. cardId 0 lets the
+ * server choose a ready card from the pool.
+ */
 export async function executeProductOrderPayment(
   id: number,
-  plan: string
+  plan: string,
+  cardId = 0
 ): Promise<ApiResponse<ProductOrder>> {
-  const res = await api.post(`/api/product/admin/orders/${id}/pay`, { plan })
+  const res = await api.post(`/api/product/admin/orders/${id}/pay`, {
+    plan,
+    card_id: cardId,
+  })
   return res.data
 }
 

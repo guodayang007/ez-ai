@@ -18,10 +18,14 @@ export class PurchaseError extends Error {
   /**
    * @param {string} key
    * @param {Record<string, string>} [params]
+   * @param {{ cardOutcome?: string }} [options] cardOutcome tells ez-ai what
+   *   the failure says about the card: 'declined' or 'needs_verification'.
+   *   Leave it unset when the card is not at fault.
    */
-  constructor(key, params = {}) {
+  constructor(key, params = {}, options = {}) {
     super(formatMessage(key, params))
     this.key = key
     this.params = params
+    this.cardOutcome = options.cardOutcome ?? ''
   }
 }

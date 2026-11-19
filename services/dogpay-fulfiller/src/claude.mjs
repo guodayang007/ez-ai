@@ -76,6 +76,7 @@ export function createClaudePurchaser(config) {
       {
         headless: config.headless,
         bitBrowserUrl: config.bitBrowserUrl,
+        bitBrowserProxy: config.bitBrowserProxy,
         origin: CLAUDE_ORIGIN,
         cookies,
         requiredCookie: 'sessionKey',
@@ -155,7 +156,7 @@ async function claudeFetch(page, path) {
     return { status: res.status, text: await res.text() }
   }, path)
   if (response.status === 403 && /<html/i.test(response.text)) {
-    throw new PurchaseError('claude.ai blocked the request with a browser check; set another browser proxy in the ez-ai Product Fulfillment settings or retry later.')
+    throw new PurchaseError('claude.ai blocked the request with a browser check; retry later.')
   }
   if (response.status === 401 || response.status === 403) {
     throw new PurchaseError('The Claude cookie has expired or was signed out; ask the buyer for a new cookie.')
